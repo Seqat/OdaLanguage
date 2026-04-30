@@ -1,0 +1,29 @@
+// hello.oda — OdaLanguage Hello World
+
+int speed = 100
+stay float gravity = 9.81
+
+string name = "OdaLang"
+print("Hello from OdaLanguage!")
+print("Speed: " + "100")
+print("Gravity is constant.")
+
+// Null safety
+string? alias = null
+string fallback = alias ?? "Unknown"
+print(fallback)
+
+// Immutable variable
+stay int max_rpm = 9000
+
+// If-else
+if (speed > 50) {
+    print("Fast!")
+} else {
+    print("Slow.")
+}
+
+// For range
+for (int i in 0..5) {
+    print("Counting...")
+}

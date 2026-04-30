@@ -1,0 +1,20 @@
+
+int a = 2
+int b = 2
+
+int sum = a + b
+
+print("a is " + a + "\n" + "b is " + b + "\n" + "sum is " + sum)
+
+
+func test (int base, int power) -> int {
+    int result = 1
+
+    for (int i in 0..power) {
+        result = result * base
+    }
+
+    return result
+}
+
+print("test(2, 3) is " + test(2, 3))

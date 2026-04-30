@@ -1,0 +1,15 @@
+// I/O Tests
+print("Testing file reading...")
+
+string? content = readFile("examples/io_test.oda")
+
+if (content != null) {
+    print("File read successfully!")
+    print("Length of file: ")
+    // We haven't implemented .length() string method yet, so we just print part of it or note success
+    // Actually let's just print a success message to avoid cluttering stdout with the whole file
+} else {
+    print("Failed to read file.")
+}
+
+// Write file could be added next
