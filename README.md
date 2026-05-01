@@ -5,6 +5,8 @@
 OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir programlama dilidir.
 Özel bir transpiler aracılığıyla doğrudan optimize edilmiş **C koduna** derlenir.
 
+![transpiler process](public/image.png)
+
 ## ✨ Özellikler
 
 | Özellik | Açıklama |
