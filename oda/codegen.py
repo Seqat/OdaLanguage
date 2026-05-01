@@ -36,6 +36,10 @@ class CCodeGenerator:
         for s in program.statements:
             if isinstance(s, ast.ClassDeclaration):
                 self._class_names.add(s.name)
+                if s.constructor:
+                    self._func_params[f"{s.name}_construct"] = s.constructor.params
+                for m in s.methods:
+                    self._func_params[f"{s.name}_{m.name}"] = m.params
             elif isinstance(s, ast.FuncDeclaration):
                 self._func_params[s.name] = s.params
                 if s.return_type:
@@ -151,7 +155,10 @@ class CCodeGenerator:
             )
             self._funcs.append(f"void {cls.name}_construct({params}) {{")
             body_lines: list[str] = []
+            old_refs = self._ref_params
+            self._ref_params = {p.name for p in cls.constructor.params}
             self._emit_block(cls.constructor.body, body_lines, cls.name)
+            self._ref_params = old_refs
             self._funcs += ["    " + l for l in body_lines]
             self._funcs.append("}")
             self._funcs.append("")
@@ -167,7 +174,10 @@ class CCodeGenerator:
                 ret = self._c_type(m.return_type)
             self._funcs.append(f"{ret} {cls.name}_{m.name}({params}) {{")
             body_lines = []
+            old_refs = self._ref_params
+            self._ref_params = {p.name for p in m.params}
             self._emit_block(m.body, body_lines, cls.name)
+            self._ref_params = old_refs
             self._funcs += ["    " + l for l in body_lines]
             self._funcs.append("}")
             self._funcs.append("")
@@ -193,9 +203,9 @@ class CCodeGenerator:
         if func.return_type:
             ret = self._c_type(func.return_type)
         self._funcs.append(f"{ret} {func.name}({params}) {{")
-        # Track ref params for dereference in body
+        # All params are passed as pointers to generalize ref support
         old_refs = self._ref_params
-        self._ref_params = {p.name for p in func.params if p.is_ref}
+        self._ref_params = {p.name for p in func.params}
         for p in func.params:
             self._var_types[p.name] = p.type_ann.base_type
         body_lines: list[str] = []
@@ -398,7 +408,7 @@ class CCodeGenerator:
         elif isinstance(arg, ast.Identifier):
             t = self._var_types.get(arg.name, "string")
             fmt = self._get_fmt(t)
-            out.append(f'printf("{fmt}\\n", {arg.name});')
+            out.append(f'printf("{fmt}\\n", {self._expr(arg, class_ctx)});')
         elif isinstance(arg, ast.IntegerLiteral):
             out.append(f'printf("%d\\n", {arg.value});')
         elif isinstance(arg, ast.FloatLiteral):
@@ -621,19 +631,31 @@ class CCodeGenerator:
             if name == "input":
                 return "_oda_input()"
             
+            lookup_name = name
+            if name in self._class_names:
+                lookup_name = f"{name}_construct"
+            
+            is_user_func = lookup_name in self._func_params
+            params = self._func_params.get(lookup_name, [])
+            
             args_parts = []
-            params = self._func_params.get(name, [])
             for i, a in enumerate(call.args):
                 a_str = self._expr(a, class_ctx)
                 is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
-                is_ref_param = i < len(params) and params[i].is_ref
-                if is_ref_call:
-                    args_parts.append(f"&{a_str}")
-                elif is_ref_param and not is_ref_call:
-                    tmp = self._next_temp()
-                    args_parts.append(f"&{a_str}")
+                
+                if is_user_func:
+                    if is_ref_call:
+                        args_parts.append(f"&{a_str}")
+                    else:
+                        ct = "void*"
+                        if i < len(params):
+                            ct = self._c_type(params[i].type_ann)
+                        args_parts.append(f"&({ct}){{{a_str}}}")
                 else:
-                    args_parts.append(a_str)
+                    if is_ref_call:
+                        args_parts.append(f"&{a_str}")
+                    else:
+                        args_parts.append(a_str)
             args_str = ", ".join(args_parts)
 
             if name == "readFile":
@@ -642,15 +664,32 @@ class CCodeGenerator:
             if name in self._class_names:
                 return f"{name}({args_str})"
             return f"{name}({args_str})"
+        
         if isinstance(call.callee, ast.MemberAccess):
             ma = call.callee
             obj = self._expr(ma.obj, class_ctx)
             args_parts = [f"&{obj}"]
+            
+            for cn in self._class_names:
+                lookup_name = f"{cn}_{ma.member}"
+                if lookup_name in self._func_params:
+                    params = self._func_params[lookup_name]
+                    for i, a in enumerate(call.args):
+                        a_str = self._expr(a, class_ctx)
+                        is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
+                        if is_ref_call:
+                            args_parts.append(f"&{a_str}")
+                        else:
+                            ct = "void*"
+                            if i < len(params):
+                                ct = self._c_type(params[i].type_ann)
+                            args_parts.append(f"&({ct}){{{a_str}}}")
+                    return f"{lookup_name}({', '.join(args_parts)})"
+            
+            # fallback
             for i, a in enumerate(call.args):
                 args_parts.append(self._expr(a, class_ctx))
-            # Guess class from known classes
-            for cn in self._class_names:
-                return f"{cn}_{ma.member}({', '.join(args_parts)})"
+            return f"/* unknown method */ {ma.member}({', '.join(args_parts)})"
         return "/* unknown call */"
 
     def _interp_string(self, node: ast.InterpolatedString, class_ctx=None) -> str:
@@ -708,6 +747,5 @@ class CCodeGenerator:
 
     def _param_c(self, p: ast.Parameter) -> str:
         ct = self._c_type(p.type_ann)
-        if p.is_ref:
-            return f"{ct}* {p.name}"
-        return f"{ct} {p.name}"
+        # ALL parameters are now pointers to generalize ref passing!
+        return f"{ct}* {p.name}"
