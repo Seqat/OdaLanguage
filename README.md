@@ -21,6 +21,8 @@ OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir progr
 | 💬 **Yorum Desteği** | `//` tek satır ve `//* ... *//` çok satırlı yorumlar |
 | 📝 **String Interpolation** | `"Hello {name}!"` |
 | 🛑 **Strict Checking** | Semantik hatalar artık derlemeyi tamamen durdurur |
+| 📦 **Diziler (Arrays)** | Statik (`int[3]`), Dinamik (`int[]`) ve Çok Boyutlu (`int[][]`) diziler |
+| 📂 **Dosya G/Ç (I/O)** | `readFile()` ile dosya okuma ve `input()` ile kullanıcı girişi alma |
 
 ## 🚀 Hızlı Başlangıç
 
@@ -99,6 +101,29 @@ class Engine {
 Engine v8 = Engine("COM3")
 v8.rev_up()
 // → destruct() otomatik çağrılır!
+```
+
+## 📝 Örnek — arrays_io.oda (Diziler ve I/O)
+
+```oda
+// Statik ve Dinamik Diziler
+int[3] static_arr = [1, 2, 3]
+int[] dynamic_arr = [4, 5, 6]
+
+// Çok Boyutlu Diziler
+int[][] matrix = [[1, 2], [3, 4], [5, 6]]
+print("Matrix element: " + matrix[1][1]) // 4 yazdırır
+
+// Dosya Okuma
+string? content = readFile("examples/hello.oda")
+if (content != null) {
+    print("Dosya başarıyla okundu!")
+}
+
+// Kullanıcı Girişi (Input)
+print("Adınızı giriniz:")
+string user_name = input()
+print("Merhaba, " + user_name + "!")
 ```
 
 ## 📂 Proje Yapısı
