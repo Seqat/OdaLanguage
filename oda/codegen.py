@@ -25,7 +25,8 @@ class CCodeGenerator:
         self._destructors: list[tuple[str, str]] = []  # (class, varname)
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}  # variable name → oda type
-        self._func_params: dict[str, list] = {}  # func name → param list
+        self._var_sizes: dict[str, list[int]] = {}  # dimensions for arrays
+        self._func_params: dict[str, list[ast.Parameter]] = {}  # func name → param list
         self._func_return_types: dict[str, str] = {}  # func name → return oda type
         self._ref_params: set[str] = set()  # currently active ref param names
 
@@ -195,6 +196,8 @@ class CCodeGenerator:
         # Track ref params for dereference in body
         old_refs = self._ref_params
         self._ref_params = {p.name for p in func.params if p.is_ref}
+        for p in func.params:
+            self._var_types[p.name] = p.type_ann.base_type
         body_lines: list[str] = []
         self._emit_block(func.body, body_lines)
         self._funcs += ["    " + l for l in body_lines]
@@ -216,6 +219,8 @@ class CCodeGenerator:
             self._emit_for(stmt, out, class_ctx)
         elif isinstance(stmt, ast.ForRangeStatement):
             self._emit_for_range(stmt, out, class_ctx)
+        elif isinstance(stmt, ast.ForInStatement):
+            self._emit_for_in(stmt, out, class_ctx)
         elif isinstance(stmt, ast.ReturnStatement):
             if stmt.value:
                 out.append(f"return {self._expr(stmt.value, class_ctx)};")
@@ -234,28 +239,62 @@ class CCodeGenerator:
         for s in stmts:
             self._emit_stmt(s, out, class_ctx)
 
+    def _emit_array_expr(self, node, ta: ast.TypeAnnotation, class_ctx=None) -> str:
+        if isinstance(node, ast.ArrayLiteral):
+            base = _C_TYPES.get(ta.base_type, ta.base_type)
+            depth = ta.array_depth
+            elems = []
+            for e in node.elements:
+                if isinstance(e, ast.ArrayLiteral):
+                    # nested
+                    inner_ta = ast.TypeAnnotation(base_type=ta.base_type, is_array=True, array_depth=depth-1)
+                    elems.append(self._emit_array_expr(e, inner_ta, class_ctx))
+                else:
+                    elems.append(self._expr(e, class_ctx))
+            
+            stars = "*" * (depth - 1)
+            cast = f"({base}{stars}[])" if depth > 0 else ""
+            return f"{cast}{{{', '.join(elems)}}}"
+        return self._expr(node, class_ctx)
+
     def _emit_var_decl(self, v: ast.VarDeclaration, out: list[str], class_ctx=None):
         ct = self._c_type(v.type_ann)
         prefix = "const " if v.is_immutable else ""
+        base_c = _C_TYPES.get(v.type_ann.base_type, v.type_ann.base_type)
 
-        if v.type_ann.is_array and v.type_ann.array_size is not None:
-            # Static array: int arr[5];
+        if v.type_ann.is_array:
+            dims = []
+            def get_dims(expr):
+                if isinstance(expr, ast.ArrayLiteral):
+                    d = [len(expr.elements)]
+                    if expr.elements and isinstance(expr.elements[0], ast.ArrayLiteral):
+                        d += get_dims(expr.elements[0])
+                    return d
+                return []
+
             if v.initializer:
-                out.append(f"{prefix}{_C_TYPES.get(v.type_ann.base_type, v.type_ann.base_type)} {v.name}[{v.type_ann.array_size}] = {self._expr(v.initializer, class_ctx)};")
-            else:
-                out.append(f"{prefix}{_C_TYPES.get(v.type_ann.base_type, v.type_ann.base_type)} {v.name}[{v.type_ann.array_size}];")
+                dims = get_dims(v.initializer)
+            elif v.type_ann.array_size is not None:
+                dims = v.type_ann.fixed_sizes if v.type_ann.fixed_sizes else [v.type_ann.array_size]
+            
+            self._var_sizes[v.name] = dims
             self._var_types[v.name] = v.type_ann.base_type
+
+            if v.initializer:
+                init_expr = self._emit_array_expr(v.initializer, v.type_ann, class_ctx)
+                if v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
+                    out.append(f"{prefix}{base_c} {v.name}[{v.type_ann.array_size}] = {init_expr};")
+                else:
+                    out.append(f"{prefix}{ct} {v.name} = {init_expr};")
+            else:
+                if v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
+                    out.append(f"{prefix}{base_c} {v.name}[{v.type_ann.array_size}];")
+                else:
+                    out.append(f"{prefix}{ct} {v.name};")
             return
 
         if v.initializer:
             init_expr = self._expr(v.initializer, class_ctx)
-            # Check if it's an array literal for a dynamic array: int[] arr = [1, 2]
-            if v.type_ann.is_array and v.type_ann.array_size is None and isinstance(v.initializer, ast.ArrayLiteral):
-                base_c = _C_TYPES.get(v.type_ann.base_type, v.type_ann.base_type)
-                out.append(f"{prefix}{base_c}* {v.name} = ({base_c}[]){init_expr};")
-                self._var_types[v.name] = v.type_ann.base_type
-                return
-            
             # Check if it's a constructor call: Engine v8 = Engine("COM3")
             if v.type_ann.base_type in self._class_names:
                 out.append(f"{v.type_ann.base_type} {v.name};")
@@ -356,9 +395,6 @@ class CCodeGenerator:
             fmt = "".join(fmt_parts)
             args_str = ", ".join(arg_exprs)
             out.append(f'printf("{fmt}\\n"{", " + args_str if args_str else ""});')
-        elif isinstance(arg, ast.BinaryExpr) and arg.op == "+":
-            flat = self._expr(arg, class_ctx)
-            out.append(f'printf("%s\\n", {flat});')
         elif isinstance(arg, ast.Identifier):
             t = self._var_types.get(arg.name, "string")
             fmt = self._get_fmt(t)
@@ -401,6 +437,7 @@ class CCodeGenerator:
         if isinstance(stmt.init, ast.VarDeclaration):
             ct = self._c_type(stmt.init.type_ann)
             init_s = f"{ct} {stmt.init.name} = {self._expr(stmt.init.initializer, class_ctx)}"
+            self._var_types[stmt.init.name] = stmt.init.type_ann.base_type
         cond_s = self._expr(stmt.condition, class_ctx) if stmt.condition else ""
         upd_s = self._expr(stmt.update, class_ctx) if stmt.update else ""
         out.append(f"for ({init_s}; {cond_s}; {upd_s}) {{")
@@ -411,13 +448,69 @@ class CCodeGenerator:
 
     def _emit_for_range(self, stmt: ast.ForRangeStatement, out: list[str], class_ctx=None):
         ct = self._c_type(stmt.var_type)
-        s = self._expr(stmt.start, class_ctx)
-        e = self._expr(stmt.end, class_ctx)
-        out.append(f"for ({ct} {stmt.var_name} = {s}; {stmt.var_name} < {e}; {stmt.var_name}++) {{")
-        body = []
-        self._emit_block(stmt.body, body, class_ctx)
-        out += ["    " + l for l in body]
+        start_expr = self._expr(stmt.start, class_ctx)
+        end_expr = self._expr(stmt.end, class_ctx)
+        step_expr = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+        self._var_types[stmt.var_name] = stmt.var_type.base_type
+        
+        s_tmp = self._next_temp() + "_s"
+        e_tmp = self._next_temp() + "_e"
+        out.append(f"{ct} {s_tmp} = {start_expr};")
+        out.append(f"{ct} {e_tmp} = {end_expr};")
+        
+        op_inc = "<=" if stmt.is_inclusive else "<"
+        op_dec = ">=" if stmt.is_inclusive else ">"
+        
+        out.append(f"if ({s_tmp} <= {e_tmp}) {{")
+        out.append(f"    for ({ct} {stmt.var_name} = {s_tmp}; {stmt.var_name} {op_inc} {e_tmp}; {stmt.var_name} += {step_expr}) {{")
+        body_inc = []
+        self._emit_block(stmt.body, body_inc, class_ctx)
+        out += ["        " + l for l in body_inc]
+        out.append("    }")
+        out.append("} else {")
+        out.append(f"    for ({ct} {stmt.var_name} = {s_tmp}; {stmt.var_name} {op_dec} {e_tmp}; {stmt.var_name} -= {step_expr}) {{")
+        body_dec = []
+        self._emit_block(stmt.body, body_dec, class_ctx)
+        out += ["        " + l for l in body_dec]
+        out.append("    }")
         out.append("}")
+
+    def _emit_for_in(self, stmt: ast.ForInStatement, out: list[str], class_ctx=None):
+        iterable_s = self._expr(stmt.iterable, class_ctx)
+        dims = None
+        if isinstance(stmt.iterable, ast.Identifier):
+            dims = self._var_sizes.get(stmt.iterable.name)
+        elif isinstance(stmt.iterable, ast.IndexAccess):
+            # Simple heuristic for nested access
+            obj_name = getattr(stmt.iterable.obj, "name", None)
+            if obj_name and obj_name in self._var_sizes:
+                outer_dims = self._var_sizes[obj_name]
+                if len(outer_dims) > 1:
+                    dims = outer_dims[1:]
+
+        if dims and len(dims) > 0:
+            size = dims[0]
+            self._var_types[stmt.var_name] = stmt.var_type.base_type
+            if len(dims) > 1:
+                self._var_sizes[stmt.var_name] = dims[1:]
+            
+            idx = self._next_temp()
+            step_s = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+            
+            if not stmt.is_reversed:
+                out.append(f"for (int {idx} = 0; {idx} < {size}; {idx} += {step_s}) {{")
+            else:
+                out.append(f"for (int {idx} = {size} - 1; {idx} >= 0; {idx} -= {step_s}) {{")
+            
+            out.append(f"    {self._c_type(stmt.var_type)} {stmt.var_name} = {iterable_s}[{idx}];")
+            body = []
+            self._emit_block(stmt.body, body, class_ctx)
+            out += ["    " + l for l in body]
+            out.append("}")
+        else:
+            # Fallback for unknown size
+            out.append(f"/* ERROR: for-in on unknown collection size: {iterable_s} */")
+            out.append(f"for (int _i = 0; _i < 0; _i++) {{ }}")
 
     def _emit_match(self, stmt: ast.MatchStatement, out: list[str], class_ctx=None):
         expr_s = self._expr(stmt.expr, class_ctx)
@@ -471,7 +564,23 @@ class CCodeGenerator:
                 return f"(*{name})"
             return name
         if isinstance(node, ast.ArrayLiteral):
-            elems = ", ".join(self._expr(e, class_ctx) for e in node.elements)
+            if not node.elements:
+                return "{0}"
+            
+            # Check if elements are also arrays (nested)
+            is_nested = any(isinstance(e, ast.ArrayLiteral) for e in node.elements)
+            elems_code = []
+            for e in node.elements:
+                e_code = self._expr(e, class_ctx)
+                if isinstance(e, ast.ArrayLiteral):
+                    # We need a cast for the nested compound literal
+                    # For now assume it's the same base type with depth-1
+                    # This is a bit of a hack without full type info in _expr
+                    elems_code.append(f"(void*){e_code}") # fallback to void* for safety in C
+                else:
+                    elems_code.append(e_code)
+            
+            elems = ", ".join(elems_code)
             return f"{{{elems}}}"
         if isinstance(node, ast.BinaryExpr):
             l = self._expr(node.left, class_ctx)
@@ -574,9 +683,6 @@ class CCodeGenerator:
         """Wrap non-string expression in a toString conversion for C."""
         if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):
             return code
-        if isinstance(node, ast.BinaryExpr) and node.op == "+":
-            # Already handled recursively by _expr
-            return code
         t = self._infer_expr_type(node)
         if t == "string":
             return code
@@ -590,6 +696,9 @@ class CCodeGenerator:
     def _c_type(self, ta: ast.TypeAnnotation) -> str:
         base = _C_TYPES.get(ta.base_type, ta.base_type)
         if ta.is_array:
+            depth = ta.array_depth if ta.array_depth > 0 else 1
+            if depth > 1:
+                return f"{base}" + ("*" * depth)
             if ta.array_size is not None:
                 return f"{base}"  # size handled at declaration
             return f"{base}*"

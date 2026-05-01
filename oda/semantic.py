@@ -113,6 +113,10 @@ class SemanticAnalyzer:
             self._analyze_expr(stmt.end)
             self.scope.define(Symbol(stmt.var_name, stmt.var_type))
             self._analyze_block(stmt.body)
+        elif isinstance(stmt, ast.ForInStatement):
+            self._analyze_expr(stmt.iterable)
+            self.scope.define(Symbol(stmt.var_name, stmt.var_type))
+            self._analyze_block(stmt.body)
         elif isinstance(stmt, ast.ReturnStatement):
             if stmt.value:
                 self._analyze_expr(stmt.value)
@@ -131,7 +135,17 @@ class SemanticAnalyzer:
             if stmt.expr:
                 self._analyze_expr(stmt.expr)
 
+    # ── helpers ──────────────────────────────────────────────
+    def _full_type(self, ta: ast.TypeAnnotation) -> str:
+        s = ta.base_type
+        if ta.is_array:
+            s += "[]" * ta.array_depth
+        if ta.is_nullable:
+            s += "?"
+        return s
+
     def _analyze_var_decl(self, stmt: ast.VarDeclaration):
+        full = self._full_type(stmt.type_ann)
         base = stmt.type_ann.base_type
         # Verify the type exists
         if base not in _WIDENING and base not in self.classes:
@@ -141,13 +155,14 @@ class SemanticAnalyzer:
         if stmt.initializer:
             self._analyze_expr(stmt.initializer)
             init_type = self._infer_type(stmt.initializer)
-            if init_type and init_type != base:
-                if not self._can_coerce(init_type, base):
-                    self._err(f"Cannot coerce '{init_type}' to '{base}' (narrowing not allowed)", stmt)
+            if init_type and init_type != full:
+                # Basic check, no complex coercion for arrays yet
+                if not self._can_coerce(init_type, full):
+                    self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt)
 
             # Non-nullable assigned null
             if not stmt.type_ann.is_nullable and isinstance(stmt.initializer, ast.NullLiteral):
-                self._err(f"Cannot assign null to non-nullable '{base}'", stmt)
+                self._err(f"Cannot assign null to non-nullable '{full}'", stmt)
 
         self.scope.define(Symbol(stmt.name, stmt.type_ann, is_immutable=stmt.is_immutable))
 
@@ -235,9 +250,13 @@ class SemanticAnalyzer:
             return "bool"
         if isinstance(expr, ast.NullLiteral):
             return None
+        if isinstance(expr, ast.ArrayLiteral):
+            if not expr.elements: return "any[]"
+            et = self._infer_type(expr.elements[0])
+            return f"{et}[]" if et else "any[]"
         if isinstance(expr, ast.Identifier):
             sym = self.scope.lookup(expr.name)
-            return sym.type_ann.base_type if sym else None
+            return self._full_type(sym.type_ann) if sym else None
         return None
 
     def _can_coerce(self, src: str, dst: str) -> bool:

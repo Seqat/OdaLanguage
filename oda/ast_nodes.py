@@ -27,6 +27,8 @@ class TypeAnnotation:
     is_result: bool = False
     is_array: bool = False
     array_size: Optional[int] = None
+    array_depth: int = 0 # 0 for scalar, 1 for [], 2 for [][]
+    fixed_sizes: list[int] = field(default_factory=list) # sizes for each dimension
     line: int = 0
     column: int = 0
 
@@ -102,6 +104,19 @@ class ForRangeStatement:
     var_name: str = ""
     start: Optional[object] = None
     end: Optional[object] = None
+    is_inclusive: bool = False
+    step: Optional[object] = None
+    body: list = field(default_factory=list)
+    line: int = 0
+    column: int = 0
+
+@dataclass
+class ForInStatement:
+    var_type: Optional[TypeAnnotation] = None
+    var_name: str = ""
+    iterable: Optional[object] = None
+    is_reversed: bool = False
+    step: Optional[object] = None
     body: list = field(default_factory=list)
     line: int = 0
     column: int = 0

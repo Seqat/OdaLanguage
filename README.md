@@ -13,10 +13,14 @@ OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir progr
 | 🛡️ **Null Safety** | Non-nullable by default, `?` ile nullable, `??` ile safe unwrap |
 | 🔒 **Immutability** | `stay` ile değiştirilemez değişkenler |
 | 🏗️ **RAII** | `destruct()` otomatik scope-end çağrısı |
-| 📦 **OOP** | Class → C struct + name-mangled fonksiyonlar |
+| 🔄 **Döngü Esnekliği** | Artan/Azalan aralıklar, `step` adımı, `reversed` ve dizi iterasyonu |
+| 📏 **Aralık Operatörleri** | `..` (exclusive) ve `..=` (inclusive) desteği |
+| 🏗️ **OOP** | Class → C struct + name-mangled fonksiyonlar |
 | 🔗 **ref Passing** | Güvenli pass-by-reference mekanizması |
 | 🎯 **Widening-Only Coercion** | `int→float ✅` / `uint→int ❌` |
+| 💬 **Yorum Desteği** | `//` tek satır ve `//* ... *//` çok satırlı yorumlar |
 | 📝 **String Interpolation** | `"Hello {name}!"` |
+| 🛑 **Strict Checking** | Semantik hatalar artık derlemeyi tamamen durdurur |
 
 ## 🚀 Hızlı Başlangıç
 
@@ -33,24 +37,41 @@ python3 -m oda.main run examples/hello.oda
 
 ## 📝 Örnek — hello.oda
 
-```
+```oda
+// Oda Language Basics
 int speed = 100
 stay float gravity = 9.81
+
+//*
+Çok satırlı
+blok yorum desteği
+*//
 
 string name = "OdaLang"
 print("Hello from OdaLanguage!")
 
+// Range-based for loops
+for (int i in 0..10 step 2) {
+    print(i) // 0 to 10 (exclusive), increase by 2
+}
+
+for (int i in 6..0 step 2) {
+    print(i) // 6 to 0, decrease by 1
+}
+
+for (int i in 0..=5) {
+    print(i) // 0 to 5 (inclusive), increase by 1
+}
+
+// Array iteration
+int[] numbers = [10, 20, 30]
+for (int n in numbers) {
+    print(n)
+}
+
+// Null safety
 string? alias = null
-string fallback = alias ?? "Unknown"
-print(fallback)
-
-if (speed > 50) {
-    print("Fast!")
-}
-
-for (int i in 0..5) {
-    print("Counting...")
-}
+print(alias ?? "No Alias")
 ```
 
 ## 📝 Örnek — engine.oda (Class & RAII)

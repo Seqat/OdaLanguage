@@ -1,1 +1,29 @@
-/OdaLanguage .pdf
+# Byte-compiled / optimized / DLL files
+oda/__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+
+# Project specific
+output/
+
+examples/
+OdaLanguage .pdf
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp

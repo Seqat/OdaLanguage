@@ -27,8 +27,8 @@ def _pipeline(source: str, filename: str) -> str:
     if sa.errors:
         for e in sa.errors:
             print(e.format(), file=sys.stderr)
-        print(f"\n  ⚠  {len(sa.errors)} semantic warning(s).", file=sys.stderr)
-        # Continue anyway for MVP (warnings, not hard errors)
+        print(f"\n  ✗ {len(sa.errors)} semantic error(s) found.\n  Compilation stopped.", file=sys.stderr)
+        sys.exit(1)
 
     # 4. Code generation
     c_code = CCodeGenerator().generate(tree)

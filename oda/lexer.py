@@ -78,9 +78,12 @@ class Lexer:
                 self._add(TokenType.NEWLINE, "\\n", line, col)
             return
 
-        # Single-line comments
+        # Comments
         if ch == "/" and self._peek() == "/":
-            self._skip_comment()
+            if self._peek(2) == "*":
+                self._skip_block_comment()
+            else:
+                self._skip_comment()
             return
 
         line, col = self.line, self.column
@@ -98,6 +101,13 @@ class Lexer:
         # Identifier / keyword
         if ch.isalpha() or ch == "_":
             self._scan_identifier(line, col)
+            return
+
+        # Three-char operators
+        three = ch + self._peek() + self._peek(2)
+        if three in _THREE_CHAR_OPS:
+            self._advance(); self._advance(); self._advance()
+            self._add(_THREE_CHAR_OPS[three], three, line, col)
             return
 
         # Two-char operators
@@ -121,6 +131,19 @@ class Lexer:
     def _skip_comment(self):
         while self._ch() and self._ch() != "\n":
             self._advance()
+
+    def _skip_block_comment(self):
+        self._advance()  # /
+        self._advance()  # /
+        self._advance()  # *
+        while self._ch():
+            if self._ch() == "*" and self._peek() == "/" and self._peek(2) == "/":
+                self._advance()  # *
+                self._advance()  # /
+                self._advance()  # /
+                return
+            self._advance()
+        raise self._error("Unterminated block comment")
 
     def _scan_string(self, line: int, col: int):
         self._advance()  # skip opening "
@@ -192,6 +215,10 @@ _TWO_CHAR_OPS: dict[str, TokenType] = {
     "-=": TokenType.MINUS_ASSIGN,
     "*=": TokenType.STAR_ASSIGN,
     "/=": TokenType.SLASH_ASSIGN,
+}
+
+_THREE_CHAR_OPS: dict[str, TokenType] = {
+    "..=": TokenType.RANGE_INCLUSIVE,
 }
 
 _ONE_CHAR_OPS: dict[str, TokenType] = {

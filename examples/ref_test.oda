@@ -1,9 +1,0 @@
-// ref_test.oda — Pass-by-reference demo (from Oda spec)
-
-func apply_filter(ref int signal) {
-    signal = signal + 50
-}
-
-int data = 100
-apply_filter(ref data)
-print(data)

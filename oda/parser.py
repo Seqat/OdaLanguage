@@ -161,12 +161,15 @@ class Parser:
         elif self._at(TokenType.NOT):
             self._advance(); ta.is_result = True
 
-        # Array: int[] or int[5]
-        if self._at(TokenType.LBRACKET):
+        while self._at(TokenType.LBRACKET):
             self._advance()
             ta.is_array = True
+            ta.array_depth += 1
             if self._at(TokenType.INTEGER):
-                ta.array_size = int(self._advance().value)
+                sz = int(self._advance().value)
+                if ta.array_depth == 1:
+                    ta.array_size = sz
+                ta.fixed_sizes.append(sz)
             self._expect(TokenType.RBRACKET, "Expected ']'")
         return ta
 
@@ -299,8 +302,20 @@ class Parser:
     def _for_stmt(self):
         t = self._advance()  # 'for'
         self._expect(TokenType.LPAREN)
-        # Detect range-based: for (int i in 0..10)
-        if self._cur().type in TYPE_TOKENS and self._peek(2).type == TokenType.IN:
+        # Detect range-based or collection-based: for (int i in ...)
+        # Improved detection to handle array types: for (int[] row in num)
+        is_for_in = False
+        p = 0
+        if self._peek(p).type in TYPE_TOKENS or self._peek(p).type == TokenType.IDENTIFIER:
+            p += 1
+            while self._peek(p).type == TokenType.LBRACKET:
+                p += 1
+                if self._peek(p).type == TokenType.INTEGER: p += 1
+                if self._peek(p).type == TokenType.RBRACKET: p += 1
+            if self._peek(p).type == TokenType.IDENTIFIER and self._peek(p+1).type == TokenType.IN:
+                is_for_in = True
+        
+        if is_for_in:
             return self._for_range(t)
         # C-style for
         init = None
@@ -329,17 +344,48 @@ class Parser:
         vt = self._type_annotation()
         vn = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.IN, "Expected 'in'")
-        start = self._expression()
-        self._expect(TokenType.RANGE, "Expected '..'")
-        end = self._expression()
+        expr = self._expression()
+        
+        if self._at(TokenType.RANGE, TokenType.RANGE_INCLUSIVE):
+            is_inclusive = self._at(TokenType.RANGE_INCLUSIVE)
+            self._advance()
+            end = self._expression()
+            
+            step = None
+            if self._at(TokenType.STEP):
+                self._advance()
+                step = self._expression()
+            
+            self._expect(TokenType.RPAREN)
+            self._skip_newlines()
+            self._expect(TokenType.LBRACE)
+            body = self._block()
+            self._expect(TokenType.RBRACE)
+            return ast.ForRangeStatement(line=t.line, column=t.column,
+                                         var_type=vt, var_name=vn,
+                                         start=expr, end=end, 
+                                         is_inclusive=is_inclusive,
+                                         step=step, body=body)
+        
+        is_reversed = False
+        if self._at(TokenType.REVERSED):
+            self._advance()
+            is_reversed = True
+            
+        step = None
+        if self._at(TokenType.STEP):
+            self._advance()
+            step = self._expression()
+        
         self._expect(TokenType.RPAREN)
         self._skip_newlines()
         self._expect(TokenType.LBRACE)
         body = self._block()
         self._expect(TokenType.RBRACE)
-        return ast.ForRangeStatement(line=t.line, column=t.column,
-                                     var_type=vt, var_name=vn,
-                                     start=start, end=end, body=body)
+        return ast.ForInStatement(line=t.line, column=t.column,
+                                   var_type=vt, var_name=vn,
+                                   iterable=expr, is_reversed=is_reversed,
+                                   step=step, body=body)
 
     def _var_decl_inline(self):
         t = self._cur()

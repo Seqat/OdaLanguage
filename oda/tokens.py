@@ -39,6 +39,8 @@ class TokenType(Enum):
     RETURN      = auto()
     BREAK       = auto()
     CONTINUE    = auto()
+    STEP        = auto()
+    REVERSED    = auto()
 
     # ── Module keywords ──────────────────────────────────────
     IMPORT      = auto()
@@ -85,6 +87,7 @@ class TokenType(Enum):
     NULLISH     = auto()   # ??
     ARROW       = auto()   # ->
     RANGE       = auto()   # ..
+    RANGE_INCLUSIVE = auto() # ..=
     QUESTION    = auto()   # ?
 
     # ── Delimiters ───────────────────────────────────────────
@@ -135,6 +138,8 @@ KEYWORDS: dict[str, TokenType] = {
     "true":      TokenType.TRUE,
     "false":     TokenType.FALSE,
     "null":      TokenType.NULL,
+    "step":      TokenType.STEP,
+    "reversed":  TokenType.REVERSED,
 }
 
 # Token types that represent Oda type names
