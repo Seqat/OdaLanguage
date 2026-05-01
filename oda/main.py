@@ -11,17 +11,16 @@ from .parser import Parser
 from .semantic import SemanticAnalyzer
 from .codegen import CCodeGenerator
 from .errors import OdaError
+from .importer import Importer
 
 
 def _pipeline(source: str, filename: str) -> str:
     """Run the full Oda → C pipeline; returns generated C code."""
-    # 1. Lex
-    tokens = Lexer(source, filename).tokenize()
+    # 1. Parse and Resolve Imports (Unity Build)
+    importer = Importer(filename)
+    tree = importer.load_entry(source, filename)
 
-    # 2. Parse
-    tree = Parser(tokens, filename).parse()
-
-    # 3. Semantic analysis
+    # 2. Semantic analysis
     sa = SemanticAnalyzer(filename)
     sa.analyze(tree)
     if sa.errors:
