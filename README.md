@@ -30,13 +30,13 @@ OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir progr
 
 ```bash
 # Sadece C'ye dönüştür
-python3 -m oda.main transpile examples/hello.oda
+./oda transpile examples/hello.oda
 
 # Derle
-python3 -m oda.main build examples/hello.oda
+./oda build examples/hello.oda
 
 # Derle ve çalıştır
-python3 -m oda.main run examples/hello.oda
+./oda run examples/hello.oda
 ```
 
 ## 📝 Örnek — hello.oda
