@@ -121,6 +121,24 @@ class SemanticAnalyzer:
             self._analyze_block(stmt.body)
         elif isinstance(stmt, ast.ForInStatement):
             self._analyze_expr(stmt.iterable)
+            # Size check: only allow iteration over known-size collections
+            is_valid = False
+            if isinstance(stmt.iterable, ast.Identifier):
+                sym = self.scope.lookup(stmt.iterable.name)
+                # Arrays are valid if they have known size info or are literals
+                if sym and sym.type_ann and sym.type_ann.is_array:
+                    # In Oda, arrays declared like 'int[3] nums' or 'int[] nums = [1,2,3]' have known size
+                    is_valid = True
+            elif isinstance(stmt.iterable, ast.InterpolatedString) or isinstance(stmt.iterable, ast.StringLiteral):
+                is_valid = True
+            elif self._infer_type(stmt.iterable) == "string":
+                is_valid = True
+            elif isinstance(stmt.iterable, ast.ArrayLiteral):
+                is_valid = True
+
+            if not is_valid:
+                self._err(f"Cannot iterate over unknown-size collection", stmt)
+
             self.scope.define(Symbol(stmt.var_name, stmt.var_type))
             self._analyze_block(stmt.body)
         elif isinstance(stmt, ast.ReturnStatement):
@@ -128,6 +146,17 @@ class SemanticAnalyzer:
                 self._analyze_expr(stmt.value)
         elif isinstance(stmt, ast.GuardStatement):
             self._analyze_expr(stmt.expr)
+            # Enforce that every case in guard MUST exit the scope
+            for case in stmt.cases:
+                has_exit = False
+                for body_stmt in case.body:
+                    if isinstance(body_stmt, (ast.ReturnStatement, ast.BreakStatement, ast.ContinueStatement)):
+                        has_exit = True
+                        break
+                if not has_exit:
+                    self._err("guard else block must exit the current scope (return or break required)", case)
+            
+            # The variable is defined AFTER the guard block
             self.scope.define(Symbol(stmt.var_name, stmt.var_type))
             for case in stmt.cases:
                 self._analyze_block(case.body)

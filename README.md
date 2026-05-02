@@ -15,16 +15,18 @@ OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir progr
 | 🛡️ **Null Safety** | Non-nullable by default, `?` ile nullable, `??` ile safe unwrap |
 | 🔒 **Immutability** | `stay` ile değiştirilemez değişkenler |
 | 🏗️ **RAII** | `destruct()` otomatik scope-end çağrısı |
-| 🔄 **Döngü Esnekliği** | Artan/Azalan aralıklar, `step` adımı, `reversed` ve dizi iterasyonu |
+| 🔄 **Döngü Esnekliği** | `for-in` (boyutu bilinen koleksiyonlar), ranges, `step`, `reversed` |
 | 📏 **Aralık Operatörleri** | `..` (exclusive) ve `..=` (inclusive) desteği |
-| 🏗️ **OOP** | Class → C struct + name-mangled fonksiyonlar |
+| 🏗️ **OOP** | `_` ile private fieldlar, `construct`, `destruct` metodları |
 | 🔗 **ref Passing** | Güvenli pass-by-reference mekanizması |
 | 🎯 **Widening-Only Coercion** | `int→float ✅` / `uint→int ❌` |
 | 💬 **Yorum Desteği** | `//` tek satır ve `//* ... *//` çok satırlı yorumlar |
 | 📝 **String Interpolation** | `"Hello {name}!"` |
+| ⚖️ **Pattern Matching** | `match` ifadesi (string ve integer desteği) |
+| 🛡️ **Error Handling** | `guard-when` exhaustive hata yönetimi |
 | 🛑 **Strict Checking** | Semantik hatalar artık derlemeyi tamamen durdurur |
-| 📦 **Diziler (Arrays)** | Statik (`int[3]`), Dinamik (`int[]`) ve N-Boyutlu (`int[][]`) diziler, `new` anahtar kelimesi ile bellek tahsisi |
-| 📂 **Dosya G/Ç (I/O)** | `readFile()` ile dosya okuma ve `input()` ile kullanıcı girişi alma |
+| 📦 **Diziler (Arrays)** | Statik, Dinamik ve N-Boyutlu diziler, `new` bellek tahsisi |
+| 📂 **Dosya G/Ç (I/O)** | `readFile()` ve `input()` desteği |
 
 ## 🚀 Hızlı Başlangıç
 
@@ -54,20 +56,22 @@ blok yorum desteği
 string name = "OdaLang"
 print("Hello from OdaLanguage!")
 
+// Pattern Matching
+match (name) {
+    "OdaLang" { print("Matched string!") }
+    "Other"   { print("Not matched") }
+}
+
 // Range-based for loops
 for (int i in 0..10 step 2) {
     print(i) // 0 to 10 (exclusive), increase by 2
 }
 
-for (int i in 6..0 step 2) {
-    print(i) // 6 to 0, decrease by 1
-}
-
 for (int i in 0..=5) {
-    print(i) // 0 to 5 (inclusive), increase by 1
+    print(i) // 0 to 5 (inclusive)
 }
 
-// Array iteration
+// Array iteration (Boyutu bilinen koleksiyonlar için)
 int[] numbers = [10, 20, 30]
 for (int n in numbers) {
     print(n)
@@ -78,17 +82,36 @@ string? alias = null
 print(alias ?? "No Alias")
 ```
 
-## 📝 Örnek — engine.oda (Class & RAII)
+## 📝 Örnek — guard_error.oda (Error Handling)
 
+```oda
+// guard ile güvenli dosya okuma ve hata yönetimi
+guard string content = readFile("config.txt") else {
+    when (FileNotFound) {
+        print("Hata: Dosya bulunamadı!")
+        return
+    }
+    when (PermissionDenied) {
+        print("Hata: Yetki yok!")
+        return
+    }
+}
+
+// Burada 'content' artık non-nullable ve güvenle kullanılabilir
+print("Dosya boyutu: {content.length()}")
 ```
-class Engine {
-    int _rpm
-    string _port
 
-    construct(string port) {
-        _port = port
+## 📝 Örnek — engine.oda (Class, Private Fields & RAII)
+
+```oda
+class Engine {
+    int _rpm    // '_' ile başlayanlar private'dır. Dışarıdan erişilemez!
+    string port
+
+    construct(string p) {
+        port = p
         _rpm = 0
-        print("Connected to " + _port)
+        print("Connected to " + port)
     }
 
     func rev_up() {
@@ -96,13 +119,14 @@ class Engine {
     }
 
     destruct() {
-        print("Closing port: " + _port)
+        print("Closing port: " + port)
     }
 }
 
 Engine v8 = Engine("COM3")
 v8.rev_up()
-// → destruct() otomatik çağrılır!
+// print(v8._rpm) // → Semantik Hata! Private field'a erişilemez.
+// → v8 scope dışına çıktığında destruct() otomatik çağrılır!
 ```
 
 ## 📝 Örnek — arrays_io.oda (Diziler ve I/O)

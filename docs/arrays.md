@@ -32,4 +32,17 @@ int first = num[0][0] // 1
 int val = num[1][2] // 6
 ```
 
-Diziler üzerinde iterasyon yapmak için döngüleri kullanabilirsiniz. (Bkz: Control Flow)
+Diziler üzerinde iterasyon yapmak için döngüleri kullanabilirsiniz. 
+
+### İterasyon Kısıtlamaları (For-In)
+OdaLanguage'de `for-in` döngüsü ile iterasyon yapılabilmesi için koleksiyonun boyutunun derleme zamanında (semantik analiz sırasında) biliniyor olması gerekir. 
+- ✅ **Geçerli**: Dizi değişkenleri (`int[] arr`), dizi literalleri (`[1, 2]`), aralıklar (`0..10`) ve stringler.
+- ❌ **Geçersiz**: Fonksiyonlardan dönen dinamik diziler (çünkü boyutu çalışma zamanında belli olur).
+
+```oda
+int[] my_arr = [1, 2, 3]
+for (int x in my_arr) { print(x) } // ✅ Geçerli
+
+func get_data() -> int[] { ... }
+// for (int x in get_data()) { ... } // ❌ HATA: Bilinmeyen koleksiyon boyutu
+```

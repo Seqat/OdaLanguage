@@ -3,7 +3,26 @@
 OdaLanguage, Nesne Yönelimli Programlamayı destekler. C koduna dönüştürüldüğünde, sınıflar C struct'larına ve sınıflara ait metodlar name-mangled (isim dönüştürülmüş) C fonksiyonlarına çevrilir.
 
 ## Sınıf Tanımlama
-`class` anahtar kelimesi ile yeni bir sınıf oluşturulur. Sınıf içerisinde değişkenler ve fonksiyonlar (`func`) tanımlanabilir. OdaLanguage'de isminin başında alt çizgi `_` olan değişkenler genellikle "private" (gizli) olarak kabul edilir.
+`class` anahtar kelimesi ile yeni bir sınıf oluşturulur. Sınıf içerisinde değişkenler ve fonksiyonlar (`func`) tanımlanabilir. 
+
+### Kapsülleme (Encapsulation)
+OdaLanguage'de isminin başında alt çizgi `_` olan değişkenler ve metodlar **kesinlikle özeldir (private)**. Semantik Analizör, bu üyelere sınıf dışından erişilmeye çalışıldığında derleme zamanı hatası verir.
+
+```oda
+class SecretBox {
+    int _secretValue // Private
+    string name      // Public
+
+    construct(int val, string n) {
+        _secretValue = val
+        name = n
+    }
+}
+
+SecretBox box = SecretBox(42, "MyBox")
+print(box.name)    // ✅ Geçerli
+// print(box._secretValue) // ❌ HATA: Private member erişimi!
+```
 
 ```oda
 class Engine {

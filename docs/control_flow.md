@@ -58,3 +58,43 @@ for (int n in numbers) {
     print(n) // Sırayla 10, 20, 30 yazdırır
 }
 ```
+
+## Pattern Matching (Match)
+
+`match` ifadesi, bir değerin birden fazla kalıpla karşılaştırılması için kullanılır. Hem `int` hem de `string` tiplerini destekler.
+
+```oda
+string cmd = "start"
+
+match (cmd) {
+    "start" { 
+        print("Sistem başlatılıyor...")
+    }
+    "stop" { 
+        print("Sistem durduruluyor...")
+    }
+    _ { 
+        print("Bilinmeyen komut")
+    }
+}
+```
+
+## Hata Yönetimi (Guard)
+
+`guard` ifadesi, nullable (boş olabilir) değerleri güvenli bir şekilde "açmak" (unwrap) ve hataları yönetmek için kullanılır. `guard` bloğunun `else` kısmı **mutlaka** kapsamdan çıkmalıdır (`return`, `break` veya `continue`).
+
+```oda
+guard string content = readFile("config.txt") else {
+    when (FileNotFound) {
+        print("Config dosyası bulunamadı!")
+        return // Scope çıkışı zorunludur
+    }
+    when (PermissionDenied) {
+        print("Dosya okuma yetkisi yok!")
+        return
+    }
+}
+
+// Bu noktadan sonra 'content' artık non-nullable 'string' tipindedir.
+print("Dosya içeriği: " + content)
+```

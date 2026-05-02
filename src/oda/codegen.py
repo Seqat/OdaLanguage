@@ -39,13 +39,9 @@ class CCodeGenerator:
             if isinstance(s, ast.ClassDeclaration):
                 self._class_names.add(s.name)
                 if s.constructor:
-                    if not s.constructor.params or s.constructor.params[0].name != "self":
-                        s.constructor.params.insert(0, ast.Parameter(ast.TypeAnnotation(s.name), "self"))
-                    self._func_params[f"{s.name}_construct"] = s.constructor.params
+                    self._func_params[f"{s.name}_construct"] = [ast.Parameter(type_ann=ast.TypeAnnotation(base_type=s.name), name="self", is_ref=True)] + s.constructor.params
                 for m in s.methods:
-                    if not m.params or m.params[0].name != "self":
-                        m.params.insert(0, ast.Parameter(ast.TypeAnnotation(s.name), "self"))
-                    self._func_params[f"{s.name}_{m.name}"] = m.params
+                    self._func_params[f"{s.name}_{m.name}"] = [ast.Parameter(type_ann=ast.TypeAnnotation(base_type=s.name), name="self", is_ref=True)] + m.params
             elif isinstance(s, ast.FuncDeclaration):
                 self._func_params[s.name] = s.params
                 if s.return_type:
@@ -193,7 +189,7 @@ class CCodeGenerator:
             params = ", ".join(
                 [self._param_c(p) for p in cls.constructor.params]
             )
-            self._funcs.append(f"void {cls.name}_construct({params}) {{")
+            self._funcs.append(f"void {cls.name}_construct({cls.name}* self{', ' + params if params else ''}) {{")
             body_lines: list[str] = []
             old_refs = self._ref_params
             self._ref_params = {p.name for p in cls.constructor.params if p.is_ref}
@@ -213,7 +209,7 @@ class CCodeGenerator:
             ret = "void"
             if m.return_type:
                 ret = self._c_type(m.return_type)
-            self._funcs.append(f"{ret} {cls.name}_{m.name}({params}) {{")
+            self._funcs.append(f"{ret} {cls.name}_{m.name}({cls.name}* self{', ' + params if params else ''}) {{")
             body_lines = []
             old_refs = self._ref_params
             self._ref_params = {p.name for p in m.params if p.is_ref}
@@ -606,12 +602,11 @@ class CCodeGenerator:
             out += ["    " + l for l in body]
             out.append("}")
         else:
-            # Fallback for unknown size
-            out.append(f"/* ERROR: for-in on unknown collection size: {iterable_s} */")
-            out.append(f"for (int _i = 0; _i < 0; _i++) {{ }}")
+            pass # Caught by semantic analysis
 
     def _emit_match(self, stmt: ast.MatchStatement, out: list[str], class_ctx=None):
         expr_s = self._expr(stmt.expr, class_ctx)
+        expr_type = self._infer_expr_type(stmt.expr)
         for i, arm in enumerate(stmt.arms):
             kw = "if" if i == 0 else "} else if"
             if arm.pattern is None:
@@ -620,7 +615,11 @@ class CCodeGenerator:
                 else:
                     out.append("/* default */ {")
             else:
-                out.append(f"{kw} ({expr_s} == {self._expr(arm.pattern, class_ctx)}) {{")
+                pat_s = self._expr(arm.pattern, class_ctx)
+                if expr_type == "string":
+                    out.append(f"{kw} (strcmp({expr_s}, {pat_s}) == 0) {{")
+                else:
+                    out.append(f"{kw} ({expr_s} == {pat_s}) {{")
             body = []
             self._emit_block(arm.body, body, class_ctx)
             out += ["    " + l for l in body]
@@ -630,14 +629,14 @@ class CCodeGenerator:
         expr_s = self._expr(stmt.expr, class_ctx)
         ct = self._c_type(stmt.var_type)
         out.append(f"/* guard unwrap */")
-        out.append(f"if ({expr_s} == NULL) {{")
+        out.append(f"{ct} {stmt.var_name} = {expr_s};")
+        out.append(f"if ({stmt.var_name} == NULL) {{")
         body = []
         for case in stmt.cases:
             body.append(f"/* err({case.error_type}) */")
             self._emit_block(case.body, body, class_ctx)
         out += ["    " + l for l in body]
         out.append("}")
-        out.append(f"{ct} {stmt.var_name} = {expr_s};")
 
     # ── expression codegen ───────────────────────────────────
     def _expr(self, node, class_ctx=None) -> str:
