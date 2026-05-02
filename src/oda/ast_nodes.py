@@ -138,11 +138,13 @@ class ContinueStatement:
     column: int = 0
 
 @dataclass
-class GuardCase:
+class WhenCase:
     error_type: str = ""
     body: list = field(default_factory=list)
     line: int = 0
     column: int = 0
+
+GuardCase = WhenCase
 
 @dataclass
 class GuardStatement:

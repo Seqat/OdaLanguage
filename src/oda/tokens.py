@@ -50,7 +50,7 @@ class TokenType(Enum):
 
     # ── Error handling keywords ──────────────────────────────
     GUARD       = auto()
-    ERR         = auto()
+    WHEN        = auto()
 
     # ── Boolean / null literals ──────────────────────────────
     TRUE        = auto()
@@ -138,7 +138,7 @@ KEYWORDS: dict[str, TokenType] = {
     "from":      TokenType.FROM,
     "as":        TokenType.AS,
     "guard":     TokenType.GUARD,
-    "err":       TokenType.ERR,
+    "when":      TokenType.WHEN,
     "true":      TokenType.TRUE,
     "false":     TokenType.FALSE,
     "null":      TokenType.NULL,

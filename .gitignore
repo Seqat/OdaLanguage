@@ -11,7 +11,9 @@ ENV/
 # Project specific
 output/
 
-examples/
+!examples/
+!tests/golden/examples/
+!tests/golden/examples/**
 OdaLanguage .pdf
 
 # OS generated files

@@ -199,3 +199,43 @@ def test_guard_unwrapped_var_is_defined_after_block():
     null_check_pos = code.index("if (content == NULL)")
     decl_pos = code.index("char* content =")
     assert decl_pos < null_check_pos
+
+def test_member_access_in_class_context_keeps_explicit_object():
+    gen = CCodeGenerator()
+
+    assert gen._expr(
+        ast.MemberAccess(obj=ast.Identifier(name="other"), member="value"),
+        class_ctx="Box",
+    ) == "other.value"
+    assert gen._expr(
+        ast.MemberAccess(obj=ast.Identifier(name="self"), member="value"),
+        class_ctx="Box",
+    ) == "self->value"
+
+def test_for_range_body_raii_state_is_emitted_once_and_reused():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="Box",
+            constructor=ast.FuncDeclaration(name="construct", body=[]),
+            destructor=ast.FuncDeclaration(name="destruct", body=[]),
+        ),
+        ast.ForRangeStatement(
+            var_type=ast.TypeAnnotation(base_type="int"),
+            var_name="i",
+            start=ast.IntegerLiteral(value=0),
+            end=ast.IntegerLiteral(value=2),
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="Box"),
+                    name="b",
+                    initializer=ast.CallExpr(callee=ast.Identifier(name="Box")),
+                )
+            ],
+        ),
+    ])
+
+    code = gen.generate(program)
+
+    assert gen._destructors == []
+    assert code.count("Box_destruct(&b);") == 2

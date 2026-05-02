@@ -80,19 +80,25 @@ class CCodeGenerator:
     def _emit_str_helper(self):
         self._helpers_emitted.add("_oda_str_concat")
         self._top += [
-            "static char* _oda_int_to_str(int v) {",
+            "#if defined(__GNUC__) || defined(__clang__)",
+            "#define ODA_UNUSED __attribute__((unused))",
+            "#else",
+            "#define ODA_UNUSED",
+            "#endif",
+            "",
+            "static ODA_UNUSED char* _oda_int_to_str(int v) {",
             "    char* buf = (char*)malloc(24);",
             "    snprintf(buf, 24, \"%d\", v);",
             "    return buf;",
             "}",
             "",
-            "static char* _oda_float_to_str(double v) {",
+            "static ODA_UNUSED char* _oda_float_to_str(double v) {",
             "    char* buf = (char*)malloc(48);",
             "    snprintf(buf, 48, \"%g\", v);",
             "    return buf;",
             "}",
             "",
-            "static char* _oda_str_concat(const char* a, const char* b) {",
+            "static ODA_UNUSED char* _oda_str_concat(const char* a, const char* b) {",
             "    size_t la = strlen(a), lb = strlen(b);",
             "    char* r = (char*)malloc(la + lb + 1);",
             "    memcpy(r, a, la);",
@@ -100,7 +106,7 @@ class CCodeGenerator:
             "    return r;",
             "}",
             "",
-            "static char* _oda_input() {",
+            "static ODA_UNUSED char* _oda_input() {",
             "    char* buf = (char*)malloc(1024);",
             "    if (fgets(buf, 1024, stdin) != NULL) {",
             "        size_t len = strlen(buf);",
@@ -109,7 +115,7 @@ class CCodeGenerator:
             "    return buf;",
             "}",
             "",
-            "static char* _oda_read_file(const char* path) {",
+            "static ODA_UNUSED char* _oda_read_file(const char* path) {",
             "    FILE* f = fopen(path, \"r\");",
             "    if (!f) return NULL;",
             "    fseek(f, 0, SEEK_END);",
@@ -523,18 +529,17 @@ class CCodeGenerator:
         
         op_inc = "<=" if stmt.is_inclusive else "<"
         op_dec = ">=" if stmt.is_inclusive else ">"
+
+        body = []
+        self._emit_block(stmt.body, body, class_ctx)
         
         out.append(f"if ({s_tmp} <= {e_tmp}) {{")
         out.append(f"    for ({ct} {stmt.var_name} = {s_tmp}; {stmt.var_name} {op_inc} {e_tmp}; {stmt.var_name} += {step_expr}) {{")
-        body_inc = []
-        self._emit_block(stmt.body, body_inc, class_ctx)
-        out += ["        " + l for l in body_inc]
+        out += ["        " + l for l in body]
         out.append("    }")
         out.append("} else {")
         out.append(f"    for ({ct} {stmt.var_name} = {s_tmp}; {stmt.var_name} {op_dec} {e_tmp}; {stmt.var_name} -= {step_expr}) {{")
-        body_dec = []
-        self._emit_block(stmt.body, body_dec, class_ctx)
-        out += ["        " + l for l in body_dec]
+        out += ["        " + l for l in body]
         out.append("    }")
         out.append("}")
 
@@ -633,7 +638,7 @@ class CCodeGenerator:
         out.append(f"if ({stmt.var_name} == NULL) {{")
         body = []
         for case in stmt.cases:
-            body.append(f"/* err({case.error_type}) */")
+            body.append(f"/* when({case.error_type}) */")
             self._emit_block(case.body, body, class_ctx)
         out += ["    " + l for l in body]
         out.append("}")
@@ -716,7 +721,7 @@ class CCodeGenerator:
             return self._emit_call_expr(node, class_ctx)
         if isinstance(node, ast.MemberAccess):
             obj = self._expr(node.obj, class_ctx)
-            if class_ctx:
+            if class_ctx and isinstance(node.obj, ast.Identifier) and node.obj.name == "self":
                 return f"self->{node.member}"
             return f"{obj}.{node.member}"
         if isinstance(node, ast.IndexAccess):

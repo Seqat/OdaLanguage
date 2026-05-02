@@ -453,22 +453,20 @@ class Parser:
         cases = []
         self._skip_newlines()
         while not self._at(TokenType.RBRACE, TokenType.EOF):
-            if self._at(TokenType.ERR):
+            case_tok = self._expect(TokenType.WHEN, "Expected 'when' in guard else block")
+            self._expect(TokenType.LPAREN)
+            err_name_parts = [self._expect(TokenType.IDENTIFIER).value]
+            while self._at(TokenType.DOT):
                 self._advance()
-                self._expect(TokenType.LPAREN)
-                err_name_parts = [self._expect(TokenType.IDENTIFIER).value]
-                while self._at(TokenType.DOT):
-                    self._advance()
-                    err_name_parts.append(self._expect(TokenType.IDENTIFIER).value)
-                err_name = ".".join(err_name_parts)
-                self._expect(TokenType.RPAREN)
-                self._expect(TokenType.ARROW)
-                self._skip_newlines()
-                self._expect(TokenType.LBRACE)
-                cbody = self._block()
-                self._expect(TokenType.RBRACE)
-                cases.append(ast.GuardCase(line=t.line, column=t.column,
-                                           error_type=err_name, body=cbody))
+                err_name_parts.append(self._expect(TokenType.IDENTIFIER).value)
+            err_name = ".".join(err_name_parts)
+            self._expect(TokenType.RPAREN)
+            self._skip_newlines()
+            self._expect(TokenType.LBRACE)
+            cbody = self._block()
+            self._expect(TokenType.RBRACE)
+            cases.append(ast.WhenCase(line=case_tok.line, column=case_tok.column,
+                                      error_type=err_name, body=cbody))
             self._skip_newlines()
         self._expect(TokenType.RBRACE)
         return ast.GuardStatement(line=t.line, column=t.column,
@@ -489,7 +487,6 @@ class Parser:
                 self._advance()  # wildcard
             else:
                 pat = self._expression()
-            self._expect(TokenType.ARROW)
             self._skip_newlines()
             self._expect(TokenType.LBRACE)
             abody = self._block()
