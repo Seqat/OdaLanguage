@@ -155,7 +155,9 @@ class SemanticAnalyzer:
         if stmt.initializer:
             self._analyze_expr(stmt.initializer)
             init_type = self._infer_type(stmt.initializer)
-            if init_type and init_type != full:
+            if init_type == "void":
+                self._err("Cannot assign a void value to a variable", stmt)
+            elif init_type and init_type != full:
                 # Basic check, no complex coercion for arrays yet
                 if not self._can_coerce(init_type, full):
                     self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt)
@@ -222,12 +224,16 @@ class SemanticAnalyzer:
         elif isinstance(expr, ast.BinaryExpr):
             self._analyze_expr(expr.left)
             self._analyze_expr(expr.right)
+            if self._infer_type(expr.left) == "void" or self._infer_type(expr.right) == "void":
+                self._err("Cannot use a void expression in a binary operation", expr)
         elif isinstance(expr, ast.UnaryExpr):
             self._analyze_expr(expr.operand)
         elif isinstance(expr, ast.CallExpr):
             self._analyze_expr(expr.callee)
             for a in expr.args:
                 self._analyze_expr(a)
+                if self._infer_type(a) == "void":
+                    self._err("Cannot use a void function call as an argument", a)
         elif isinstance(expr, ast.MemberAccess):
             self._analyze_expr(expr.obj)
         elif isinstance(expr, ast.IndexAccess):
@@ -237,6 +243,12 @@ class SemanticAnalyzer:
             for part in expr.parts:
                 if isinstance(part, ast.Identifier):
                     self._analyze_expr(part)
+        elif isinstance(expr, ast.ArrayAllocation):
+            for sz in expr.sizes:
+                self._analyze_expr(sz)
+                sz_type = self._infer_type(sz)
+                if sz_type not in ("int", "uint") and sz_type is not None:
+                    self._err("Array dimensions must be integer expressions", expr)
 
     # ── type inference (basic) ───────────────────────────────
     def _infer_type(self, expr) -> str | None:
@@ -254,9 +266,28 @@ class SemanticAnalyzer:
             if not expr.elements: return "any[]"
             et = self._infer_type(expr.elements[0])
             return f"{et}[]" if et else "any[]"
+        if isinstance(expr, ast.ArrayAllocation):
+            return expr.base_type + ("[]" * len(expr.sizes))
         if isinstance(expr, ast.Identifier):
             sym = self.scope.lookup(expr.name)
             return self._full_type(sym.type_ann) if sym else None
+        if isinstance(expr, ast.CallExpr):
+            if isinstance(expr.callee, ast.Identifier):
+                func_info = self.functions.get(expr.callee.name)
+                if func_info:
+                    if func_info.decl.return_type:
+                        return self._full_type(func_info.decl.return_type)
+                    return "void"
+            elif isinstance(expr.callee, ast.MemberAccess):
+                obj_type = self._infer_type(expr.callee.obj)
+                if obj_type and obj_type in self.classes:
+                    ci = self.classes[obj_type]
+                    for m in ci.decl.methods:
+                        if m.name == expr.callee.member:
+                            if m.return_type:
+                                return self._full_type(m.return_type)
+                            return "void"
+            return None
         return None
 
     def _can_coerce(self, src: str, dst: str) -> bool:

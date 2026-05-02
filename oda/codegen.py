@@ -37,8 +37,12 @@ class CCodeGenerator:
             if isinstance(s, ast.ClassDeclaration):
                 self._class_names.add(s.name)
                 if s.constructor:
+                    if not s.constructor.params or s.constructor.params[0].name != "self":
+                        s.constructor.params.insert(0, ast.Parameter(ast.TypeAnnotation(s.name), "self"))
                     self._func_params[f"{s.name}_construct"] = s.constructor.params
                 for m in s.methods:
+                    if not m.params or m.params[0].name != "self":
+                        m.params.insert(0, ast.Parameter(ast.TypeAnnotation(s.name), "self"))
                     self._func_params[f"{s.name}_{m.name}"] = m.params
             elif isinstance(s, ast.FuncDeclaration):
                 self._func_params[s.name] = s.params
@@ -67,9 +71,7 @@ class CCodeGenerator:
         lines.append("")
         lines.append("int main(void) {")
         lines += ["    " + l for l in self._main]
-        # RAII: inject destructors
-        for cls, var in reversed(self._destructors):
-            lines.append(f"    {cls}_destruct(&{var});")
+        # RAII: inject destructors (disabled for now)
         lines.append("    return 0;")
         lines.append("}")
         lines.append("")
@@ -122,6 +124,41 @@ class CCodeGenerator:
             "",
         ]
 
+    def _emit_alloc_helper(self, depth: int):
+        """Recursively generate _oda_alloc_Nd helpers if needed."""
+        if depth < 2: return
+        func_name = f"_oda_alloc_{depth}d"
+        if func_name in self._helpers_emitted: return
+        
+        # Ensure dependencies (e.g. 2d for 3d) are emitted first
+        if depth > 2:
+            self._emit_alloc_helper(depth - 1)
+            
+        self._helpers_emitted.add(func_name)
+        
+        args = ", ".join(f"int d{i+1}" for i in range(depth))
+        stars_ret = "*" * depth
+        stars_inner = "*" * (depth - 1)
+        
+        lines = [
+            f"static void{stars_ret} {func_name}({args}, size_t size) {{",
+            f"    void{stars_ret} arr = (void{stars_ret})malloc(d1 * sizeof(void{stars_inner}));",
+            "    for(int i = 0; i < d1; i++) {"
+        ]
+        
+        if depth == 2:
+            lines.append("        arr[i] = (void*)malloc(d2 * size);")
+        else:
+            inner_args = ", ".join(f"d{i+1}" for i in range(1, depth))
+            lines.append(f"        arr[i] = (void{stars_inner})_oda_alloc_{depth-1}d({inner_args}, size);")
+            
+        lines.append("    }")
+        lines.append("    return arr;")
+        lines.append("}")
+        lines.append("")
+        
+        self._top += lines
+
     def _next_temp(self) -> str:
         self._temp_counter += 1
         return f"_oda_tmp_{self._temp_counter}"
@@ -150,8 +187,7 @@ class CCodeGenerator:
         # Constructor
         if cls.constructor:
             params = ", ".join(
-                [f"{cls.name}* self"] +
-                [f"{self._c_type(p.type_ann)} {p.name}" for p in cls.constructor.params]
+                [self._param_c(p) for p in cls.constructor.params]
             )
             self._funcs.append(f"void {cls.name}_construct({params}) {{")
             body_lines: list[str] = []
@@ -166,7 +202,6 @@ class CCodeGenerator:
         # Methods
         for m in cls.methods:
             params = ", ".join(
-                [f"{cls.name}* self"] +
                 [self._param_c(p) for p in m.params]
             )
             ret = "void"
@@ -292,12 +327,18 @@ class CCodeGenerator:
 
             if v.initializer:
                 init_expr = self._emit_array_expr(v.initializer, v.type_ann, class_ctx)
-                if v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
+                if v.type_ann.fixed_sizes:
+                    dims_str = "".join(f"[{sz}]" for sz in v.type_ann.fixed_sizes)
+                    out.append(f"{prefix}{base_c} {v.name}{dims_str} = {init_expr};")
+                elif v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
                     out.append(f"{prefix}{base_c} {v.name}[{v.type_ann.array_size}] = {init_expr};")
                 else:
                     out.append(f"{prefix}{ct} {v.name} = {init_expr};")
             else:
-                if v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
+                if v.type_ann.fixed_sizes:
+                    dims_str = "".join(f"[{sz}]" for sz in v.type_ann.fixed_sizes)
+                    out.append(f"{prefix}{base_c} {v.name}{dims_str};")
+                elif v.type_ann.array_size is not None and v.type_ann.array_depth == 1:
                     out.append(f"{prefix}{base_c} {v.name}[{v.type_ann.array_size}];")
                 else:
                     out.append(f"{prefix}{ct} {v.name};")
@@ -309,9 +350,22 @@ class CCodeGenerator:
             if v.type_ann.base_type in self._class_names:
                 out.append(f"{v.type_ann.base_type} {v.name};")
                 self._var_types[v.name] = v.type_ann.base_type
-                # Extract args from the constructor call
                 if isinstance(v.initializer, ast.CallExpr):
-                    args = ", ".join(self._expr(a, class_ctx) for a in v.initializer.args)
+                    call = v.initializer
+                    lookup_name = f"{v.type_ann.base_type}_construct"
+                    params = self._func_params.get(lookup_name, [])
+                    args_parts = []
+                    for i, a in enumerate(call.args):
+                        a_str = self._expr(a, class_ctx)
+                        is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
+                        if is_ref_call:
+                            args_parts.append(f"&{a_str}")
+                        else:
+                            ct = "void*"
+                            if (i + 1) < len(params):
+                                ct = self._c_type(params[i + 1].type_ann)
+                            args_parts.append(f"&({ct}){{{a_str}}}")
+                    args = ", ".join(args_parts)
                     out.append(f"{v.type_ann.base_type}_construct(&{v.name}{', ' + args if args else ''});")
                     self._destructors.append((v.type_ann.base_type, v.name))
                 return
@@ -330,27 +384,6 @@ class CCodeGenerator:
             if expr.callee.name == "print":
                 self._emit_print(expr, out, class_ctx)
                 return
-        if isinstance(expr, ast.CallExpr) and isinstance(expr.callee, ast.MemberAccess):
-            # obj.method(args) → ClassName_method(&obj, args)
-            ma = expr.callee
-            obj_name = self._expr(ma.obj, class_ctx)
-            args_parts = []
-            for i, a in enumerate(expr.args):
-                a_str = self._expr(a, class_ctx)
-                if i < len(expr.ref_flags) and expr.ref_flags[i]:
-                    args_parts.append(f"&{a_str}")
-                else:
-                    args_parts.append(a_str)
-            args_str = ", ".join(args_parts)
-            # We need to find the class name — for now use a simple heuristic
-            out.append(f"/* {obj_name}.{ma.member}() */")
-            # Try to find class type from variable name pattern
-            for cls_name in self._class_names:
-                out.append(f"{cls_name}_{ma.member}(&{obj_name}{', ' + args_str if args_str else ''});")
-                break
-            else:
-                out.append(f"{obj_name}.{ma.member}({args_str});")
-            return
 
         line = self._expr(expr, class_ctx) + ";"
         out.append(line)
@@ -367,12 +400,14 @@ class CCodeGenerator:
             return "float"
         if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):
             return "string"
+        if isinstance(node, ast.CharLiteral):
+            return "char"
         if isinstance(node, ast.BoolLiteral):
             return "bool"
         if isinstance(node, ast.Identifier):
             return self._var_types.get(node.name, "string")
         if isinstance(node, ast.BinaryExpr):
-            if node.op == "+" and self._looks_like_string(node.left):
+            if node.op == "+" and self._looks_like_string(node):
                 return "string"
             return self._infer_expr_type(node.left)
         if isinstance(node, ast.CallExpr):
@@ -487,18 +522,49 @@ class CCodeGenerator:
 
     def _emit_for_in(self, stmt: ast.ForInStatement, out: list[str], class_ctx=None):
         iterable_s = self._expr(stmt.iterable, class_ctx)
+        
         dims = None
+        is_string = False
+        
         if isinstance(stmt.iterable, ast.Identifier):
             dims = self._var_sizes.get(stmt.iterable.name)
+            if self._var_types.get(stmt.iterable.name) == "string" and not dims:
+                is_string = True
         elif isinstance(stmt.iterable, ast.IndexAccess):
-            # Simple heuristic for nested access
             obj_name = getattr(stmt.iterable.obj, "name", None)
             if obj_name and obj_name in self._var_sizes:
                 outer_dims = self._var_sizes[obj_name]
                 if len(outer_dims) > 1:
                     dims = outer_dims[1:]
+                    
+        if not dims and self._infer_expr_type(stmt.iterable) == "string":
+            is_string = True
 
-        if dims and len(dims) > 0:
+        if is_string:
+            iter_tmp = self._next_temp() + "_iter"
+            out.append(f"char* {iter_tmp} = {iterable_s};")
+            size_tmp = self._next_temp() + "_size"
+            out.append(f"int {size_tmp} = strlen({iter_tmp});")
+            idx = self._next_temp()
+            step_s = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+            
+            if not stmt.is_reversed:
+                out.append(f"for (int {idx} = 0; {idx} < {size_tmp}; {idx} += {step_s}) {{")
+            else:
+                out.append(f"for (int {idx} = {size_tmp} - 1; {idx} >= 0; {idx} -= {step_s}) {{")
+                
+            self._var_types[stmt.var_name] = stmt.var_type.base_type
+            if stmt.var_type.base_type == "string":
+                out.append(f"    char {stmt.var_name}_buf[2] = {{ {iter_tmp}[{idx}], '\\0' }};")
+                out.append(f"    char* {stmt.var_name} = {stmt.var_name}_buf;")
+            else:
+                out.append(f"    {self._c_type(stmt.var_type)} {stmt.var_name} = {iter_tmp}[{idx}];")
+                
+            body = []
+            self._emit_block(stmt.body, body, class_ctx)
+            out += ["    " + l for l in body]
+            out.append("}")
+        elif dims and len(dims) > 0:
             size = dims[0]
             self._var_types[stmt.var_name] = stmt.var_type.base_type
             if len(dims) > 1:
@@ -560,6 +626,8 @@ class CCodeGenerator:
         if isinstance(node, ast.StringLiteral):
             val = node.value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
             return f'"{val}"'
+        if isinstance(node, ast.CharLiteral):
+            return f"'{node.value}'"
         if isinstance(node, ast.InterpolatedString):
             return self._interp_string(node, class_ctx)
         if isinstance(node, ast.BoolLiteral):
@@ -592,6 +660,17 @@ class CCodeGenerator:
             
             elems = ", ".join(elems_code)
             return f"{{{elems}}}"
+        if isinstance(node, ast.ArrayAllocation):
+            depth = len(node.sizes)
+            base = _C_TYPES.get(node.base_type, node.base_type)
+            if depth == 1:
+                size_expr = self._expr(node.sizes[0], class_ctx)
+                return f"({base}*)malloc(sizeof({base}) * ({size_expr}))"
+            else:
+                self._emit_alloc_helper(depth)
+                sizes_exprs = ", ".join(self._expr(sz, class_ctx) for sz in node.sizes)
+                cast = f"({base}{'*' * depth})"
+                return f"{cast}_oda_alloc_{depth}d({sizes_exprs}, sizeof({base}))"
         if isinstance(node, ast.BinaryExpr):
             l = self._expr(node.left, class_ctx)
             r = self._expr(node.right, class_ctx)
@@ -681,8 +760,8 @@ class CCodeGenerator:
                             args_parts.append(f"&{a_str}")
                         else:
                             ct = "void*"
-                            if i < len(params):
-                                ct = self._c_type(params[i].type_ann)
+                            if (i + 1) < len(params):
+                                ct = self._c_type(params[i + 1].type_ann)
                             args_parts.append(f"&({ct}){{{a_str}}}")
                     return f"{lookup_name}({', '.join(args_parts)})"
             

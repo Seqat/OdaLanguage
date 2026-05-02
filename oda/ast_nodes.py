@@ -205,6 +205,12 @@ class StringLiteral:
     column: int = 0
 
 @dataclass
+class CharLiteral:
+    value: str = ""
+    line: int = 0
+    column: int = 0
+
+@dataclass
 class InterpolatedString:
     parts: list = field(default_factory=list)
     line: int = 0
@@ -282,5 +288,12 @@ class ArrayLiteral:
 class ConstructorCall:
     class_name: str = ""
     args: list = field(default_factory=list)
+    line: int = 0
+    column: int = 0
+
+@dataclass
+class ArrayAllocation:
+    base_type: str = ""
+    sizes: list = field(default_factory=list)
     line: int = 0
     column: int = 0

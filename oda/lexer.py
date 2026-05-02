@@ -93,6 +93,11 @@ class Lexer:
             self._scan_string(line, col)
             return
 
+        # Character literal
+        if ch == "'":
+            self._scan_char(line, col)
+            return
+
         # Number literal
         if ch.isdigit():
             self._scan_number(line, col)
@@ -173,6 +178,30 @@ class Lexer:
             raise self._error("Unterminated string literal")
         self._advance()  # skip closing "
         self._add(TokenType.STRING_LIT, "".join(buf), line, col)
+
+    def _scan_char(self, line: int, col: int):
+        self._advance()  # skip opening '
+        if not self._ch() or self._ch() == "'":
+            raise self._error("Empty or unterminated character literal")
+        
+        char_val = ""
+        if self._ch() == "\\":
+            self._advance()
+            esc = self._ch()
+            if esc == "n": char_val = "\\n"
+            elif esc == "t": char_val = "\\t"
+            elif esc == "\\": char_val = "\\\\"
+            elif esc == "'": char_val = "\\'"
+            elif esc == "0": char_val = "\\0"
+            else: char_val = esc
+            self._advance()
+        else:
+            char_val = self._advance()
+            
+        if self._ch() != "'":
+            raise self._error("Unterminated character literal")
+        self._advance()  # skip closing '
+        self._add(TokenType.CHAR_LIT, char_val, line, col)
 
     def _scan_number(self, line: int, col: int):
         buf: list[str] = []

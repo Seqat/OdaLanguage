@@ -9,6 +9,7 @@ class TokenType(Enum):
     INTEGER     = auto()
     FLOAT_LIT   = auto()
     STRING_LIT  = auto()
+    CHAR_LIT    = auto()
     IDENTIFIER  = auto()
 
     # ── Type keywords ────────────────────────────────────────
@@ -55,6 +56,9 @@ class TokenType(Enum):
     TRUE        = auto()
     FALSE       = auto()
     NULL        = auto()
+
+    # ── Memory allocation keywords ───────────────────────────
+    NEW         = auto()
 
     # ── Arithmetic operators ─────────────────────────────────
     PLUS        = auto()   # +
@@ -140,6 +144,7 @@ KEYWORDS: dict[str, TokenType] = {
     "null":      TokenType.NULL,
     "step":      TokenType.STEP,
     "reversed":  TokenType.REVERSED,
+    "new":       TokenType.NEW,
 }
 
 # Token types that represent Oda type names

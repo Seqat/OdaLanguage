@@ -23,7 +23,7 @@ OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir progr
 | 💬 **Yorum Desteği** | `//` tek satır ve `//* ... *//` çok satırlı yorumlar |
 | 📝 **String Interpolation** | `"Hello {name}!"` |
 | 🛑 **Strict Checking** | Semantik hatalar artık derlemeyi tamamen durdurur |
-| 📦 **Diziler (Arrays)** | Statik (`int[3]`), Dinamik (`int[]`) ve Çok Boyutlu (`int[][]`) diziler |
+| 📦 **Diziler (Arrays)** | Statik (`int[3]`), Dinamik (`int[]`) ve N-Boyutlu (`int[][]`) diziler, `new` anahtar kelimesi ile bellek tahsisi |
 | 📂 **Dosya G/Ç (I/O)** | `readFile()` ile dosya okuma ve `input()` ile kullanıcı girişi alma |
 
 ## 🚀 Hızlı Başlangıç
@@ -115,6 +115,15 @@ int[] dynamic_arr = [4, 5, 6]
 // Çok Boyutlu Diziler
 int[][] matrix = [[1, 2], [3, 4], [5, 6]]
 print("Matrix element: " + matrix[1][1]) // 4 yazdırır
+
+// N-Boyutlu Dinamik Bellek Tahsisi (new)
+int rows = 10
+int cols = 10
+int[][] dynamic_grid = new int[rows][cols]
+dynamic_grid[0][1] = 42
+print("Dinamik Dizi: " + dynamic_grid[0][1])
+
+// (Kapsamlı N-Boyutlu dizi örneği için "examples/OdaLife/" klasörünü inceleyebilirsiniz)
 
 // Dosya Okuma
 string? content = readFile("examples/hello.oda")

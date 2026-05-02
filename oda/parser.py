@@ -301,10 +301,34 @@ class Parser:
 
     def _for_stmt(self):
         t = self._advance()  # 'for'
+        
+        self._skip_newlines()
+        
+        # 1. Infinite loop: for { ... }
+        if self._at(TokenType.LBRACE):
+            self._advance()
+            body = self._block()
+            self._expect(TokenType.RBRACE)
+            return ast.WhileStatement(line=t.line, column=t.column, 
+                                      condition=ast.BoolLiteral(line=t.line, column=t.column, value=True), 
+                                      body=body)
+                                      
         self._expect(TokenType.LPAREN)
-        # Detect range-based or collection-based: for (int i in ...)
-        # Improved detection to handle array types: for (int[] row in num)
+        
+        # Detect range-based, collection-based, or while-like loop
         is_for_in = False
+        has_semicolon = False
+        
+        p = 0
+        while True:
+            pt = self._peek(p)
+            if pt.type == TokenType.EOF or pt.type == TokenType.RPAREN:
+                break
+            if pt.type == TokenType.SEMICOLON:
+                has_semicolon = True
+                break
+            p += 1
+
         p = 0
         if self._peek(p).type in TYPE_TOKENS or self._peek(p).type == TokenType.IDENTIFIER:
             p += 1
@@ -317,7 +341,18 @@ class Parser:
         
         if is_for_in:
             return self._for_range(t)
-        # C-style for
+            
+        # 2. While-like loop: for (expr) { ... }
+        if not has_semicolon:
+            cond = self._expression()
+            self._expect(TokenType.RPAREN)
+            self._skip_newlines()
+            self._expect(TokenType.LBRACE)
+            body = self._block()
+            self._expect(TokenType.RBRACE)
+            return ast.WhileStatement(line=t.line, column=t.column, condition=cond, body=body)
+
+        # 3. C-style for
         init = None
         if not self._at(TokenType.SEMICOLON):
             if self._cur().type in TYPE_TOKENS:
@@ -652,6 +687,10 @@ class Parser:
                 return self._parse_interpolated(t)
             return ast.StringLiteral(line=t.line, column=t.column, value=t.value)
 
+        if t.type == TokenType.CHAR_LIT:
+            self._advance()
+            return ast.CharLiteral(line=t.line, column=t.column, value=t.value)
+
         if t.type == TokenType.TRUE:
             self._advance()
             return ast.BoolLiteral(line=t.line, column=t.column, value=True)
@@ -684,6 +723,25 @@ class Parser:
                     elements.append(self._expression())
             self._expect(TokenType.RBRACKET, "Expected ']' after array elements")
             return ast.ArrayLiteral(line=t.line, column=t.column, elements=elements)
+
+        if t.type == TokenType.NEW:
+            self._advance()
+            if self._cur().type in TYPE_TOKENS or self._cur().type == TokenType.IDENTIFIER:
+                base = self._advance().value
+            else:
+                raise ParserError(f"Expected type after 'new', got {self._cur().value!r}", t.line, t.column, self.filename)
+            
+            sizes = []
+            while self._at(TokenType.LBRACKET):
+                self._advance()
+                sizes.append(self._expression())
+                self._expect(TokenType.RBRACKET, "Expected ']' after array size")
+            
+            if not sizes:
+                raise ParserError("Expected array dimensions (e.g. [10]) after type in 'new'", t.line, t.column, self.filename)
+            
+            return ast.ArrayAllocation(line=t.line, column=t.column, base_type=base, sizes=sizes)
+
 
         raise ParserError(f"Unexpected token: {t.value!r}", t.line, t.column, self.filename)
 
