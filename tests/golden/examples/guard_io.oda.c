@@ -70,11 +70,20 @@ static ODA_UNUSED char* _oda_read_file(const char* path) {
 }
 
 
+void show_hello_file(void) {
+    /* guard unwrap */
+    char* content = _oda_read_file("examples/hello.oda");
+    if (content == NULL) {
+        /* when(FileNotFound) */
+        printf("hello example is missing\n");
+        return;
+    }
+    printf("loaded hello.oda\n");
+    printf("%s\n", content);
+}
+
 
 int main(void) {
-    int a = 45;
-    int b = 2123;
-    printf("Hello from OdaLanguage\n");
-    printf("a+b= %d\n", (a + b));
+    show_hello_file();
     return 0;
 }

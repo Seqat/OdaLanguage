@@ -1,0 +1,24 @@
+// Ranges, nested loops, while loops, and pattern matching.
+string command = "start"
+
+match (command) {
+    "start" { print("command=start") }
+    "stop" { print("command=stop") }
+    _ { print("command=unknown") }
+}
+
+for (int i in 0..3) {
+    print("range i={i}")
+}
+
+for (int i in 0..=4 step 2) {
+    print("inclusive step i={i}")
+}
+
+int row = 0
+while (row < 2) {
+    for (int col in 0..2) {
+        print("cell={row},{col}")
+    }
+    row += 1
+}

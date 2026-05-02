@@ -1,188 +1,197 @@
-# OdaLanguage 🏠
+# OdaLanguage
 
 > **"The safest room for code."**
 
-OdaLanguage, modern, yarı-statik tipli, yüksek okunabilirliğe sahip bir programlama dilidir.
-Özel bir transpiler aracılığıyla doğrudan optimize edilmiş **C koduna** derlenir.
+OdaLanguage is a safe, readable, semi-statically typed programming language that transpiles to C. Its long-term goal is to become a deterministic and safe target language for AI-generated systems code.
+
+The compiler pipeline is intentionally simple:
+
+```text
+Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
+```
 
 ![transpiler process](public/image.png)
 
-## ✨ Özellikler
+## Features
 
-| Özellik | Açıklama |
+| Feature | Status |
 |---|---|
-| 🔄 **C'ye Transpilasyon** | `.oda` → AST → Unity Build C → Native Binary |
-| 🛡️ **Null Safety** | Non-nullable by default, `?` ile nullable, `??` ile safe unwrap |
-| 🔒 **Immutability** | `stay` ile değiştirilemez değişkenler |
-| 🏗️ **RAII** | `destruct()` otomatik scope-end çağrısı |
-| 🔄 **Döngü Esnekliği** | `for-in` (boyutu bilinen koleksiyonlar), ranges, `step`, `reversed` |
-| 📏 **Aralık Operatörleri** | `..` (exclusive) ve `..=` (inclusive) desteği |
-| 🏗️ **OOP** | `_` ile private fieldlar, `construct`, `destruct` metodları |
-| 🔗 **ref Passing** | Güvenli pass-by-reference mekanizması |
-| 🎯 **Widening-Only Coercion** | `int→float ✅` / `uint→int ❌` |
-| 💬 **Yorum Desteği** | `//` tek satır ve `//* ... *//` çok satırlı yorumlar |
-| 📝 **String Interpolation** | `"Hello {name}!"` |
-| ⚖️ **Pattern Matching** | `match` ifadesi (string ve integer desteği) |
-| 🛡️ **Error Handling** | `guard-when` exhaustive hata yönetimi |
-| 🛑 **Strict Checking** | Semantik hatalar artık derlemeyi tamamen durdurur |
-| 📦 **Diziler (Arrays)** | Statik, Dinamik ve N-Boyutlu diziler, `new` bellek tahsisi |
-| 📂 **Dosya G/Ç (I/O)** | `readFile()` ve `input()` desteği |
+| C transpilation | `.oda` source is lowered into a single C translation unit. |
+| Semi-static typing | Explicit primitive, array, function, and class annotations. |
+| Null safety | Nullable values use `?`; fallback expressions use `??`; `guard ... when` unwraps nullable results. |
+| Immutability | `stay` marks a variable as immutable after initialization. |
+| RAII-style cleanup | `destruct()` is called automatically when generated scopes exit. |
+| Ranges and loops | `for-in`, `while`, C-style `for`, `..`, `..=`, `step`, and `reversed`. |
+| Arrays | Dynamic-style literals, fixed-size annotations, multidimensional arrays, and `new` allocation. |
+| Classes | Private fields with `_`, `construct`, methods, and `destruct`. |
+| `ref` parameters | Explicit pass-by-reference at function boundaries. |
+| String interpolation | Interpolated expressions such as `"sum={a+b}"`. |
+| Pattern matching | `match (value) { pattern { ... } _ { ... } }` for integers and strings. |
+| File and console I/O | `readFile()` and `input()` builtins. |
+| Strict semantic checking | Semantic errors stop compilation before C generation. |
 
-## 🚀 Hızlı Başlangıç
+## Quick Start
 
 ```bash
-# Sadece C'ye dönüştür
+# Transpile only
 ./oda transpile examples/hello.oda
 
-# Derle
+# Transpile and compile
 ./oda build examples/hello.oda
 
-# Derle ve çalıştır
+# Transpile, compile, and run
 ./oda run examples/hello.oda
+
+# Run the compiler test suite
+make test
 ```
 
-## 📝 Örnek — hello.oda
+## Example Programs
 
-```oda
-// Oda Language Basics
-int speed = 100
-stay float gravity = 9.81
+The `examples/` directory contains small programs that double as living documentation. Golden tests ensure every `.oda` example transpiles, compiles with `gcc -Wall -Wextra -Werror`, and matches its checked-in C snapshot.
 
-//*
-Çok satırlı
-blok yorum desteği
-*//
+| File | Demonstrates |
+|---|---|
+| `examples/hello.oda` | Basic variables and expression interpolation. |
+| `examples/control_flow.oda` | `match`, ranges, nested loops, `while`, and `step`. |
+| `examples/arrays.oda` | Array iteration, indexing, and multidimensional arrays. |
+| `examples/functions_ref.oda` | Functions, return values, and `ref` parameters. |
+| `examples/classes_raii.oda` | Classes, private fields, constructors, methods, destructors, and RAII cleanup. |
+| `examples/guard_io.oda` | `readFile()`, nullable unwrap, and `guard ... when` flow. |
 
-string name = "OdaLang"
-print("Hello from OdaLanguage!")
+Run any example with:
 
-// Pattern Matching
-match (name) {
-    "OdaLang" { print("Matched string!") }
-    "Other"   { print("Not matched") }
-}
-
-// Range-based for loops
-for (int i in 0..10 step 2) {
-    print(i) // 0 to 10 (exclusive), increase by 2
-}
-
-for (int i in 0..=5) {
-    print(i) // 0 to 5 (inclusive)
-}
-
-// Array iteration (Boyutu bilinen koleksiyonlar için)
-int[] numbers = [10, 20, 30]
-for (int n in numbers) {
-    print(n)
-}
-
-// Null safety
-string? alias = null
-print(alias ?? "No Alias")
+```bash
+./oda run examples/control_flow.oda
 ```
 
-## 📝 Örnek — guard_error.oda (Error Handling)
+## Syntax Tour
+
+### Variables And Interpolation
 
 ```oda
-// guard ile güvenli dosya okuma ve hata yönetimi
-guard string content = readFile("config.txt") else {
-    when (FileNotFound) {
-        print("Hata: Dosya bulunamadı!")
-        return
-    }
-    when (PermissionDenied) {
-        print("Hata: Yetki yok!")
-        return
-    }
-}
+int a = 45
+int b = 2123
 
-// Burada 'content' artık non-nullable ve güvenle kullanılabilir
-print("Dosya boyutu: {content.length()}")
+print("a+b= {a+b}")
 ```
 
-## 📝 Örnek — engine.oda (Class, Private Fields & RAII)
+Interpolation braces accept full Oda expressions, not only variable names.
+
+### Control Flow
 
 ```oda
-class Engine {
-    int _rpm    // '_' ile başlayanlar private'dır. Dışarıdan erişilemez!
-    string port
+string command = "start"
 
-    construct(string p) {
-        port = p
-        _rpm = 0
-        print("Connected to " + port)
+match (command) {
+    "start" { print("command=start") }
+    "stop" { print("command=stop") }
+    _ { print("command=unknown") }
+}
+
+for (int i in 0..=4 step 2) {
+    print("i={i}")
+}
+```
+
+### Arrays
+
+```oda
+int[][] matrix = [[1, 2], [3, 4]]
+print("matrix[1][0]={matrix[1][0]}")
+
+for (int[] row in matrix) {
+    print("row-sum={row[0] + row[1]}")
+}
+```
+
+### Functions And `ref`
+
+```oda
+func bump(ref int value) {
+    value += 1
+}
+
+int total = 41
+bump(ref total)
+print("total={total}")
+```
+
+### Classes And RAII
+
+```oda
+class Counter {
+    int _value
+
+    construct(int start) {
+        _value = start
     }
 
-    func rev_up() {
-        _rpm = _rpm + 1000
+    func inc() {
+        _value += 1
+    }
+
+    func get() -> int {
+        return _value
     }
 
     destruct() {
-        print("Closing port: " + port)
+        if (_value >= 0) {
+            print("counter closed")
+        }
     }
 }
 
-Engine v8 = Engine("COM3")
-v8.rev_up()
-// print(v8._rpm) // → Semantik Hata! Private field'a erişilemez.
-// → v8 scope dışına çıktığında destruct() otomatik çağrılır!
+Counter counter = Counter(5)
+counter.inc()
+int current = counter.get()
+print("counter now={current}")
 ```
 
-## 📝 Örnek — arrays_io.oda (Diziler ve I/O)
+Fields beginning with `_` are private. The semantic analyzer rejects private member access from outside the class.
+
+### Guard Flow
 
 ```oda
-// Statik ve Dinamik Diziler
-int[3] static_arr = [1, 2, 3]
-int[] dynamic_arr = [4, 5, 6]
+func load_config() {
+    guard string content = readFile("config.txt") else {
+        when (FileNotFound) {
+            print("config missing")
+            return
+        }
+    }
 
-// Çok Boyutlu Diziler
-int[][] matrix = [[1, 2], [3, 4], [5, 6]]
-print("Matrix element: " + matrix[1][1]) // 4 yazdırır
-
-// N-Boyutlu Dinamik Bellek Tahsisi (new)
-int rows = 10
-int cols = 10
-int[][] dynamic_grid = new int[rows][cols]
-dynamic_grid[0][1] = 42
-print("Dinamik Dizi: " + dynamic_grid[0][1])
-
-// (Kapsamlı N-Boyutlu dizi örneği için "examples/OdaLife/" klasörünü inceleyebilirsiniz)
-
-// Dosya Okuma
-string? content = readFile("examples/hello.oda")
-if (content != null) {
-    print("Dosya başarıyla okundu!")
+    print(content)
 }
-
-// Kullanıcı Girişi (Input)
-print("Adınızı giriniz:")
-string user_name = input()
-print("Merhaba, " + user_name + "!")
 ```
 
-## 📂 Proje Yapısı
+Each `when` block inside a `guard` must leave the current scope with `return`, `break`, or `continue`.
 
-```
+## Project Layout
+
+```text
 OdaLanguage/
-├── oda/                    # Transpiler kaynak kodu
-│   ├── tokens.py           # Token tanımları
-│   ├── lexer.py            # Tokenizer
-│   ├── parser.py           # Recursive descent parser
-│   ├── ast_nodes.py        # AST düğüm sınıfları
-│   ├── semantic.py         # Semantic analiz
-│   ├── codegen.py          # C kod üretici
-│   └── main.py             # CLI
-├── examples/               # Örnek .oda programları
-├── output/                 # Üretilen C çıktıları
-└── OdaLanguage .pdf        # Dil spesifikasyonu
+├── oda                         # CLI wrapper
+├── src/oda/
+│   ├── tokens.py               # Token definitions
+│   ├── lexer.py                # Tokenizer
+│   ├── parser.py               # Recursive descent parser
+│   ├── ast_nodes.py            # AST dataclasses
+│   ├── semantic.py             # Semantic analysis
+│   ├── codegen.py              # C code generator
+│   ├── importer.py             # Import resolver / unity AST builder
+│   └── main.py                 # CLI entry point
+├── examples/                   # Executable language examples
+├── tests/                      # Unit, integration, and golden tests
+└── docs/                       # Language notes
 ```
 
-## 🛠️ Gereksinimler
+## Requirements
 
 - Python 3.10+
-- GCC veya Clang (derleme ve çalıştırma için)
+- GCC or Clang
+- `pytest` for the test suite
 
-## 📄 Lisans
+## Development Status
 
-Bu proje aktif geliştirme aşamasındadır.
+OdaLanguage is experimental and under active development. The current implementation prioritizes a small, inspectable compiler pipeline and strict tests over language breadth.

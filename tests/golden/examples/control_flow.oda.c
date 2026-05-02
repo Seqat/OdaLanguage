@@ -72,9 +72,50 @@ static ODA_UNUSED char* _oda_read_file(const char* path) {
 
 
 int main(void) {
-    int a = 45;
-    int b = 2123;
-    printf("Hello from OdaLanguage\n");
-    printf("a+b= %d\n", (a + b));
+    char* command = "start";
+    if (strcmp(command, "start") == 0) {
+        printf("command=start\n");
+    } else if (strcmp(command, "stop") == 0) {
+        printf("command=stop\n");
+    } else {
+        printf("command=unknown\n");
+    }
+    int _oda_tmp_1_s = 0;
+    int _oda_tmp_2_e = 3;
+    if (_oda_tmp_1_s <= _oda_tmp_2_e) {
+        for (int i = _oda_tmp_1_s; i < _oda_tmp_2_e; i += 1) {
+            printf("range i=%d\n", i);
+        }
+    } else {
+        for (int i = _oda_tmp_1_s; i > _oda_tmp_2_e; i -= 1) {
+            printf("range i=%d\n", i);
+        }
+    }
+    int _oda_tmp_3_s = 0;
+    int _oda_tmp_4_e = 4;
+    if (_oda_tmp_3_s <= _oda_tmp_4_e) {
+        for (int i = _oda_tmp_3_s; i <= _oda_tmp_4_e; i += 2) {
+            printf("inclusive step i=%d\n", i);
+        }
+    } else {
+        for (int i = _oda_tmp_3_s; i >= _oda_tmp_4_e; i -= 2) {
+            printf("inclusive step i=%d\n", i);
+        }
+    }
+    int row = 0;
+    while ((row < 2)) {
+        int _oda_tmp_5_s = 0;
+        int _oda_tmp_6_e = 2;
+        if (_oda_tmp_5_s <= _oda_tmp_6_e) {
+            for (int col = _oda_tmp_5_s; col < _oda_tmp_6_e; col += 1) {
+                printf("cell=%d,%d\n", row, col);
+            }
+        } else {
+            for (int col = _oda_tmp_5_s; col > _oda_tmp_6_e; col -= 1) {
+                printf("cell=%d,%d\n", row, col);
+            }
+        }
+        row += 1;
+    }
     return 0;
 }

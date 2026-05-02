@@ -281,7 +281,7 @@ class SemanticAnalyzer:
             self._analyze_expr(expr.index)
         elif isinstance(expr, ast.InterpolatedString):
             for part in expr.parts:
-                if isinstance(part, ast.Identifier):
+                if not isinstance(part, str):
                     self._analyze_expr(part)
         elif isinstance(expr, ast.ArrayAllocation):
             for sz in expr.sizes:

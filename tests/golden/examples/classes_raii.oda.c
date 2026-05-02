@@ -3,6 +3,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct {
+    int _value;
+} Counter;
+
 #if defined(__GNUC__) || defined(__clang__)
 #define ODA_UNUSED __attribute__((unused))
 #else
@@ -70,11 +74,32 @@ static ODA_UNUSED char* _oda_read_file(const char* path) {
 }
 
 
+void Counter_construct(Counter* self, int start) {
+    self->_value = start;
+    printf("counter opened\n");
+}
+
+void Counter_inc(Counter* self) {
+    self->_value += 1;
+}
+
+int Counter_get(Counter* self) {
+    return self->_value;
+}
+
+void Counter_destruct(Counter* self) {
+    if ((self->_value >= 0)) {
+        printf("counter closed\n");
+    }
+}
+
 
 int main(void) {
-    int a = 45;
-    int b = 2123;
-    printf("Hello from OdaLanguage\n");
-    printf("a+b= %d\n", (a + b));
+    Counter counter;
+    Counter_construct(&counter, 5);
+    Counter_inc(&counter);
+    int current = Counter_get(&counter);
+    printf("counter now=%d\n", current);
+    Counter_destruct(&counter);
     return 0;
 }

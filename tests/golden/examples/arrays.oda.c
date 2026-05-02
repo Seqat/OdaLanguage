@@ -72,9 +72,18 @@ static ODA_UNUSED char* _oda_read_file(const char* path) {
 
 
 int main(void) {
-    int a = 45;
-    int b = 2123;
-    printf("Hello from OdaLanguage\n");
-    printf("a+b= %d\n", (a + b));
+    int* numbers = (int[]){10, 20, 30};
+    for (int _oda_tmp_1 = 0; _oda_tmp_1 < 3; _oda_tmp_1 += 1) {
+        int n = numbers[_oda_tmp_1];
+        printf("number=%d\n", n);
+    }
+    int** matrix = (int*[]){(int[]){1, 2}, (int[]){3, 4}};
+    printf("matrix[1][0]=%d\n", matrix[1][0]);
+    for (int _oda_tmp_2 = 0; _oda_tmp_2 < 2; _oda_tmp_2 += 1) {
+        int* row = matrix[_oda_tmp_2];
+        printf("row-sum=%d\n", (row[0] + row[1]));
+    }
+    int*** cube = (int**[]){(int*[]){(int[]){1, 2}, (int[]){3, 4}}, (int*[]){(int[]){5, 6}, (int[]){7, 8}}};
+    printf("cube[1][0][1]=%d\n", cube[1][0][1]);
     return 0;
 }

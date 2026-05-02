@@ -122,6 +122,36 @@ print("speed={speed}")
 '''
     assert compile_and_run(src) == "speed=42"
 
+def test_string_interpolation_with_expression():
+    src = '''
+int a = 1
+int b = 2
+print("a+b= {a+b}")
+'''
+    assert compile_and_run(src) == "a+b= 3"
+
+def test_string_interpolation_assignment_uses_standard_c_temp():
+    src = '''
+string name = "Oda"
+string msg = "hello {name}"
+print(msg)
+'''
+    assert compile_and_run(src) == "hello Oda"
+
+def test_user_function_value_argument_compiles():
+    src = '''
+func add1(int x) -> int { return x + 1 }
+print(add1(41))
+'''
+    assert compile_and_run(src) == "42"
+
+def test_ref_parameter_rvalue_argument_compiles_with_temp():
+    src = '''
+func touch(ref int x) { print(x) }
+touch(7)
+'''
+    assert compile_and_run(src) == "7"
+
 def test_guard_success_continues_after_unwrap():
     src = '''
 func check() {

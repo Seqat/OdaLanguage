@@ -70,11 +70,19 @@ static ODA_UNUSED char* _oda_read_file(const char* path) {
 }
 
 
+int add(int left, int right) {
+    return (left + right);
+}
+
+void bump(int* value) {
+    (*value) += 1;
+}
+
 
 int main(void) {
-    int a = 45;
-    int b = 2123;
-    printf("Hello from OdaLanguage\n");
-    printf("a+b= %d\n", (a + b));
+    int total = add(20, 22);
+    printf("total=%d\n", total);
+    bump(&total);
+    printf("bumped=%d\n", total);
     return 0;
 }

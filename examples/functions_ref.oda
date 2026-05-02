@@ -1,0 +1,14 @@
+// Functions, return values, and ref parameters.
+func add(int left, int right) -> int {
+    return left + right
+}
+
+func bump(ref int value) {
+    value += 1
+}
+
+int total = add(20, 22)
+print("total={total}")
+
+bump(ref total)
+print("bumped={total}")

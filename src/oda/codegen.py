@@ -31,6 +31,7 @@ class CCodeGenerator:
         self._func_params: dict[str, list[ast.Parameter]] = {}  # func name → param list
         self._func_return_types: dict[str, str] = {}  # func name → return oda type
         self._ref_params: set[str] = set()  # currently active ref param names
+        self._expr_preludes: list[list[str]] = []
 
     # ── public API ───────────────────────────────────────────
     def generate(self, program: ast.Program) -> str:
@@ -107,11 +108,29 @@ class CCodeGenerator:
             "}",
             "",
             "static ODA_UNUSED char* _oda_input() {",
-            "    char* buf = (char*)malloc(1024);",
-            "    if (fgets(buf, 1024, stdin) != NULL) {",
-            "        size_t len = strlen(buf);",
-            "        if (len > 0 && buf[len-1] == '\\n') buf[len-1] = '\\0';",
+            "    size_t cap = 64;",
+            "    size_t len = 0;",
+            "    char* buf = (char*)malloc(cap);",
+            "    if (!buf) {",
+            "        fprintf(stderr, \"oda: input allocation failed\\n\");",
+            "        exit(1);",
             "    }",
+            "    int ch;",
+            "    while ((ch = fgetc(stdin)) != EOF && ch != '\\n') {",
+            "        if (len + 1 >= cap) {",
+            "            size_t new_cap = cap * 2;",
+            "            char* new_buf = (char*)realloc(buf, new_cap);",
+            "            if (!new_buf) {",
+            "                free(buf);",
+            "                fprintf(stderr, \"oda: input allocation failed\\n\");",
+            "                exit(1);",
+            "            }",
+            "            buf = new_buf;",
+            "            cap = new_cap;",
+            "        }",
+            "        buf[len++] = (char)ch;",
+            "    }",
+            "    buf[len] = '\\0';",
             "    return buf;",
             "}",
             "",
@@ -168,6 +187,20 @@ class CCodeGenerator:
     def _next_temp(self) -> str:
         self._temp_counter += 1
         return f"_oda_tmp_{self._temp_counter}"
+
+    def _capture_expr(self, node, class_ctx=None) -> tuple[list[str], str]:
+        self._expr_preludes.append([])
+        expr = self._expr(node, class_ctx)
+        return self._expr_preludes.pop(), expr
+
+    def _capture_code(self, fn) -> tuple[list[str], str]:
+        self._expr_preludes.append([])
+        code = fn()
+        return self._expr_preludes.pop(), code
+
+    def _add_expr_prelude(self, line: str):
+        if self._expr_preludes:
+            self._expr_preludes[-1].append(line)
 
     # ── top-level dispatch ───────────────────────────────────
     def _emit_toplevel(self, stmt):
@@ -285,7 +318,9 @@ class CCodeGenerator:
                     cn, vn = self._destructors[i]
                     out.append(f"{cn}_destruct(&{vn});")
             if stmt.value:
-                out.append(f"return {self._expr(stmt.value, class_ctx)};")
+                prelude, value = self._capture_expr(stmt.value, class_ctx)
+                out += prelude
+                out.append(f"return {value};")
             else:
                 out.append("return;")
         elif isinstance(stmt, ast.BreakStatement):
@@ -350,7 +385,10 @@ class CCodeGenerator:
             self._var_types[v.name] = v.type_ann.base_type
 
             if v.initializer:
-                init_expr = self._emit_array_expr(v.initializer, v.type_ann, class_ctx)
+                prelude, init_expr = self._capture_code(
+                    lambda: self._emit_array_expr(v.initializer, v.type_ann, class_ctx)
+                )
+                out += prelude
                 if v.type_ann.fixed_sizes:
                     dims_str = "".join(f"[{sz}]" for sz in v.type_ann.fixed_sizes)
                     out.append(f"{prefix}{base_c} {v.name}{dims_str} = {init_expr};")
@@ -369,7 +407,6 @@ class CCodeGenerator:
             return
 
         if v.initializer:
-            init_expr = self._expr(v.initializer, class_ctx)
             # Check if it's a constructor call: Engine v8 = Engine("COM3")
             if v.type_ann.base_type in self._class_names:
                 out.append(f"{v.type_ann.base_type} {v.name};")
@@ -378,21 +415,20 @@ class CCodeGenerator:
                     call = v.initializer
                     lookup_name = f"{v.type_ann.base_type}_construct"
                     params = self._func_params.get(lookup_name, [])
-                    args_parts = []
-                    for i, a in enumerate(call.args):
-                        a_str = self._expr(a, class_ctx)
-                        is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
-                        if is_ref_call:
-                            args_parts.append(f"&{a_str}")
-                        else:
-                            ct = "void*"
-                            if (i + 1) < len(params):
-                                ct = self._c_type(params[i + 1].type_ann)
-                            args_parts.append(f"&({ct}){{{a_str}}}")
-                    args = ", ".join(args_parts)
+                    def build_args():
+                        args_parts = []
+                        for i, a in enumerate(call.args):
+                            param = params[i + 1] if (i + 1) < len(params) else None
+                            is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
+                            args_parts.append(self._emit_arg(a, param, is_ref_call, class_ctx))
+                        return ", ".join(args_parts)
+                    prelude, args = self._capture_code(build_args)
+                    out += prelude
                     out.append(f"{v.type_ann.base_type}_construct(&{v.name}{', ' + args if args else ''});")
                     self._destructors.append((v.type_ann.base_type, v.name))
                 return
+            prelude, init_expr = self._capture_expr(v.initializer, class_ctx)
+            out += prelude
             out.append(f"{prefix}{ct} {v.name} = {init_expr};")
             self._var_types[v.name] = v.type_ann.base_type
         else:
@@ -409,8 +445,9 @@ class CCodeGenerator:
                 self._emit_print(expr, out, class_ctx)
                 return
 
-        line = self._expr(expr, class_ctx) + ";"
-        out.append(line)
+        prelude, expr_s = self._capture_expr(expr, class_ctx)
+        out += prelude
+        out.append(expr_s + ";")
 
     def _get_fmt(self, oda_type: str) -> str:
         """Return printf format specifier for an Oda type."""
@@ -456,18 +493,22 @@ class CCodeGenerator:
             fmt_parts, arg_exprs = [], []
             for part in arg.parts:
                 if isinstance(part, str):
-                    fmt_parts.append(part.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"'))
-                elif isinstance(part, ast.Identifier):
-                    t = self._var_types.get(part.name, "string")
+                    fmt_parts.append(part.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n"))
+                else:
+                    t = self._infer_expr_type(part)
                     fmt_parts.append(self._get_fmt(t))
-                    arg_exprs.append(self._expr(part, class_ctx))
+                    prelude, part_s = self._capture_expr(part, class_ctx)
+                    out += prelude
+                    arg_exprs.append(part_s)
             fmt = "".join(fmt_parts)
             args_str = ", ".join(arg_exprs)
             out.append(f'printf("{fmt}\\n"{", " + args_str if args_str else ""});')
         elif isinstance(arg, ast.Identifier):
             t = self._var_types.get(arg.name, "string")
             fmt = self._get_fmt(t)
-            out.append(f'printf("{fmt}\\n", {self._expr(arg, class_ctx)});')
+            prelude, arg_s = self._capture_expr(arg, class_ctx)
+            out += prelude
+            out.append(f'printf("{fmt}\\n", {arg_s});')
         elif isinstance(arg, ast.IntegerLiteral):
             out.append(f'printf("%d\\n", {arg.value});')
         elif isinstance(arg, ast.FloatLiteral):
@@ -475,18 +516,32 @@ class CCodeGenerator:
         else:
             t = self._infer_expr_type(arg)
             fmt = self._get_fmt(t)
-            out.append(f'printf("{fmt}\\n", {self._expr(arg, class_ctx)});')
+            prelude, arg_s = self._capture_expr(arg, class_ctx)
+            out += prelude
+            out.append(f'printf("{fmt}\\n", {arg_s});')
 
     def _emit_if(self, stmt: ast.IfStatement, out: list[str], class_ctx=None):
-        out.append(f"if ({self._expr(stmt.condition, class_ctx)}) {{")
+        prelude, cond_s = self._capture_expr(stmt.condition, class_ctx)
+        out += prelude
+        out.append(f"if ({cond_s}) {{")
         body = []
         self._emit_block(stmt.body, body, class_ctx)
         out += ["    " + l for l in body]
         for cond, blk in stmt.elif_branches:
-            out.append(f"}} else if ({self._expr(cond, class_ctx)}) {{")
+            prelude, cond_s = self._capture_expr(cond, class_ctx)
+            if prelude:
+                out.append("} else {")
+                out += ["    " + l for l in prelude]
+                out.append(f"    if ({cond_s}) {{")
+                indent = "        "
+            else:
+                out.append(f"}} else if ({cond_s}) {{")
+                indent = "    "
             body = []
             self._emit_block(blk, body, class_ctx)
-            out += ["    " + l for l in body]
+            out += [indent + l for l in body]
+            if prelude:
+                out.append("    }")
         if stmt.else_body:
             out.append("} else {")
             body = []
@@ -495,7 +550,9 @@ class CCodeGenerator:
         out.append("}")
 
     def _emit_while(self, stmt: ast.WhileStatement, out: list[str], class_ctx=None):
-        out.append(f"while ({self._expr(stmt.condition, class_ctx)}) {{")
+        prelude, cond_s = self._capture_expr(stmt.condition, class_ctx)
+        out += prelude
+        out.append(f"while ({cond_s}) {{")
         body = []
         self._emit_block(stmt.body, body, class_ctx)
         out += ["    " + l for l in body]
@@ -505,10 +562,14 @@ class CCodeGenerator:
         init_s = ""
         if isinstance(stmt.init, ast.VarDeclaration):
             ct = self._c_type(stmt.init.type_ann)
-            init_s = f"{ct} {stmt.init.name} = {self._expr(stmt.init.initializer, class_ctx)}"
+            prelude, init_expr = self._capture_expr(stmt.init.initializer, class_ctx)
+            out += prelude
+            init_s = f"{ct} {stmt.init.name} = {init_expr}"
             self._var_types[stmt.init.name] = stmt.init.type_ann.base_type
-        cond_s = self._expr(stmt.condition, class_ctx) if stmt.condition else ""
-        upd_s = self._expr(stmt.update, class_ctx) if stmt.update else ""
+        prelude, cond_s = self._capture_expr(stmt.condition, class_ctx) if stmt.condition else ([], "")
+        out += prelude
+        prelude, upd_s = self._capture_expr(stmt.update, class_ctx) if stmt.update else ([], "")
+        out += prelude
         out.append(f"for ({init_s}; {cond_s}; {upd_s}) {{")
         body = []
         self._emit_block(stmt.body, body, class_ctx)
@@ -517,9 +578,12 @@ class CCodeGenerator:
 
     def _emit_for_range(self, stmt: ast.ForRangeStatement, out: list[str], class_ctx=None):
         ct = self._c_type(stmt.var_type)
-        start_expr = self._expr(stmt.start, class_ctx)
-        end_expr = self._expr(stmt.end, class_ctx)
-        step_expr = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+        prelude, start_expr = self._capture_expr(stmt.start, class_ctx)
+        out += prelude
+        prelude, end_expr = self._capture_expr(stmt.end, class_ctx)
+        out += prelude
+        prelude, step_expr = self._capture_expr(stmt.step, class_ctx) if stmt.step else ([], "1")
+        out += prelude
         self._var_types[stmt.var_name] = stmt.var_type.base_type
         
         s_tmp = self._next_temp() + "_s"
@@ -544,7 +608,8 @@ class CCodeGenerator:
         out.append("}")
 
     def _emit_for_in(self, stmt: ast.ForInStatement, out: list[str], class_ctx=None):
-        iterable_s = self._expr(stmt.iterable, class_ctx)
+        prelude, iterable_s = self._capture_expr(stmt.iterable, class_ctx)
+        out += prelude
         
         dims = None
         is_string = False
@@ -569,7 +634,8 @@ class CCodeGenerator:
             size_tmp = self._next_temp() + "_size"
             out.append(f"int {size_tmp} = strlen({iter_tmp});")
             idx = self._next_temp()
-            step_s = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+            prelude, step_s = self._capture_expr(stmt.step, class_ctx) if stmt.step else ([], "1")
+            out += prelude
             
             if not stmt.is_reversed:
                 out.append(f"for (int {idx} = 0; {idx} < {size_tmp}; {idx} += {step_s}) {{")
@@ -594,7 +660,8 @@ class CCodeGenerator:
                 self._var_sizes[stmt.var_name] = dims[1:]
             
             idx = self._next_temp()
-            step_s = self._expr(stmt.step, class_ctx) if stmt.step else "1"
+            prelude, step_s = self._capture_expr(stmt.step, class_ctx) if stmt.step else ([], "1")
+            out += prelude
             
             if not stmt.is_reversed:
                 out.append(f"for (int {idx} = 0; {idx} < {size}; {idx} += {step_s}) {{")
@@ -610,7 +677,8 @@ class CCodeGenerator:
             pass # Caught by semantic analysis
 
     def _emit_match(self, stmt: ast.MatchStatement, out: list[str], class_ctx=None):
-        expr_s = self._expr(stmt.expr, class_ctx)
+        prelude, expr_s = self._capture_expr(stmt.expr, class_ctx)
+        out += prelude
         expr_type = self._infer_expr_type(stmt.expr)
         for i, arm in enumerate(stmt.arms):
             kw = "if" if i == 0 else "} else if"
@@ -620,7 +688,8 @@ class CCodeGenerator:
                 else:
                     out.append("/* default */ {")
             else:
-                pat_s = self._expr(arm.pattern, class_ctx)
+                prelude, pat_s = self._capture_expr(arm.pattern, class_ctx)
+                out += prelude
                 if expr_type == "string":
                     out.append(f"{kw} (strcmp({expr_s}, {pat_s}) == 0) {{")
                 else:
@@ -631,7 +700,8 @@ class CCodeGenerator:
         out.append("}")
 
     def _emit_guard(self, stmt: ast.GuardStatement, out: list[str], class_ctx=None):
-        expr_s = self._expr(stmt.expr, class_ctx)
+        prelude, expr_s = self._capture_expr(stmt.expr, class_ctx)
+        out += prelude
         ct = self._c_type(stmt.var_type)
         out.append(f"/* guard unwrap */")
         out.append(f"{ct} {stmt.var_name} = {expr_s};")
@@ -730,6 +800,17 @@ class CCodeGenerator:
             return f"{obj}[{idx}]"
         return "/* ??? */"
 
+    def _emit_arg(self, arg, param: ast.Parameter | None, is_ref_call: bool, class_ctx=None) -> str:
+        arg_s = self._expr(arg, class_ctx)
+        if is_ref_call:
+            return f"&{arg_s}"
+        if param and param.is_ref:
+            ct = self._c_type(param.type_ann)
+            tmp = self._next_temp() + "_arg"
+            self._add_expr_prelude(f"{ct} {tmp} = {arg_s};")
+            return f"&{tmp}"
+        return arg_s
+
     def _emit_call_expr(self, call: ast.CallExpr, class_ctx=None) -> str:
         if isinstance(call.callee, ast.Identifier):
             name = call.callee.name
@@ -745,22 +826,16 @@ class CCodeGenerator:
             
             args_parts = []
             for i, a in enumerate(call.args):
-                a_str = self._expr(a, class_ctx)
                 is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
-                
                 if is_user_func:
-                    if is_ref_call:
-                        args_parts.append(f"&{a_str}")
-                    else:
-                        ct = "void*"
-                        if i < len(params):
-                            ct = self._c_type(params[i].type_ann)
-                        args_parts.append(f"&({ct}){{{a_str}}}")
+                    param = params[i] if i < len(params) else None
+                    args_parts.append(self._emit_arg(a, param, is_ref_call, class_ctx))
                 else:
                     if is_ref_call:
+                        a_str = self._expr(a, class_ctx)
                         args_parts.append(f"&{a_str}")
                     else:
-                        args_parts.append(a_str)
+                        args_parts.append(self._expr(a, class_ctx))
             args_str = ", ".join(args_parts)
 
             if name == "readFile":
@@ -780,15 +855,9 @@ class CCodeGenerator:
                 if lookup_name in self._func_params:
                     params = self._func_params[lookup_name]
                     for i, a in enumerate(call.args):
-                        a_str = self._expr(a, class_ctx)
                         is_ref_call = i < len(call.ref_flags) and call.ref_flags[i]
-                        if is_ref_call:
-                            args_parts.append(f"&{a_str}")
-                        else:
-                            ct = "void*"
-                            if (i + 1) < len(params):
-                                ct = self._c_type(params[i + 1].type_ann)
-                            args_parts.append(f"&({ct}){{{a_str}}}")
+                        param = params[i + 1] if (i + 1) < len(params) else None
+                        args_parts.append(self._emit_arg(a, param, is_ref_call, class_ctx))
                     return f"{lookup_name}({', '.join(args_parts)})"
             
             # fallback
@@ -801,18 +870,21 @@ class CCodeGenerator:
         fmt_parts, arg_list = [], []
         for part in node.parts:
             if isinstance(part, str):
-                fmt_parts.append(part.replace("%", "%%").replace('"', '\\"'))
+                fmt_parts.append(part.replace("%", "%%").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n"))
             else:
                 t = self._infer_expr_type(part)
                 fmt_parts.append(self._get_fmt(t))
                 arg_list.append(self._expr(part, class_ctx))
         fmt = "".join(fmt_parts)
+        len_tmp = self._next_temp() + "_len"
         tmp = self._next_temp()
         args_str = (", " + ", ".join(arg_list)) if arg_list else ""
-        return (
-            f'({{ char* {tmp} = (char*)malloc(1024); '
-            f'snprintf({tmp}, 1024, "{fmt}"{args_str}); {tmp}; }})'
-        )
+        self._add_expr_prelude(f'int {len_tmp} = snprintf(NULL, 0, "{fmt}"{args_str});')
+        self._add_expr_prelude(f'if ({len_tmp} < 0) {{ fprintf(stderr, "oda: string interpolation failed\\n"); exit(1); }}')
+        self._add_expr_prelude(f'char* {tmp} = (char*)malloc((size_t){len_tmp} + 1);')
+        self._add_expr_prelude(f'if (!{tmp}) {{ fprintf(stderr, "oda: string interpolation allocation failed\\n"); exit(1); }}')
+        self._add_expr_prelude(f'snprintf({tmp}, (size_t){len_tmp} + 1, "{fmt}"{args_str});')
+        return tmp
 
     def _looks_like_string(self, node) -> bool:
         if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):

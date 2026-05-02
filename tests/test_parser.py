@@ -106,6 +106,19 @@ def test_parses_interpolated_string_parts():
     assert init.parts[1].name == "name"
     assert init.parts[2] == "!"
 
+def test_parses_interpolated_expression_parts():
+    program = parse('string message = "sum={a + b}"')
+    init = program.statements[0].initializer
+
+    assert isinstance(init, ast.InterpolatedString)
+    assert init.parts[0] == "sum="
+    assert isinstance(init.parts[1], ast.BinaryExpr)
+    assert isinstance(init.parts[1].left, ast.Identifier)
+    assert init.parts[1].left.name == "a"
+    assert init.parts[1].op == "+"
+    assert isinstance(init.parts[1].right, ast.Identifier)
+    assert init.parts[1].right.name == "b"
+
 
 def test_parses_match_with_wildcard_arm():
     program = parse(

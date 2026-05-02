@@ -1,0 +1,14 @@
+// Guard-based nullable unwrap around file I/O.
+func show_hello_file() {
+    guard string content = readFile("examples/hello.oda") else {
+        when (FileNotFound) {
+            print("hello example is missing")
+            return
+        }
+    }
+
+    print("loaded hello.oda")
+    print(content)
+}
+
+show_hello_file()

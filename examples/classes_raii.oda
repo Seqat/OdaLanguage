@@ -1,0 +1,28 @@
+// Classes, private fields, constructor/destructor, and RAII cleanup.
+class Counter {
+    int _value
+
+    construct(int start) {
+        _value = start
+        print("counter opened")
+    }
+
+    func inc() {
+        _value += 1
+    }
+
+    func get() -> int {
+        return _value
+    }
+
+    destruct() {
+        if (_value >= 0) {
+            print("counter closed")
+        }
+    }
+}
+
+Counter counter = Counter(5)
+counter.inc()
+int current = counter.get()
+print("counter now={current}")

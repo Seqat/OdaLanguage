@@ -1,0 +1,16 @@
+// One-dimensional and multidimensional arrays.
+int[] numbers = [10, 20, 30]
+
+for (int n in numbers) {
+    print("number={n}")
+}
+
+int[][] matrix = [[1, 2], [3, 4]]
+print("matrix[1][0]={matrix[1][0]}")
+
+for (int[] row in matrix) {
+    print("row-sum={row[0] + row[1]}")
+}
+
+int[][][] cube = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]]
+print("cube[1][0][1]={cube[1][0][1]}")

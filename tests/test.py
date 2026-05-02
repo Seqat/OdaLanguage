@@ -34,7 +34,7 @@ def test_bug_02_pass_by_value():
     assert not re.search(r"int\*\s+a", code)
 
 def test_bug_03_string_interpolation():
-    """BUG-03: String interpolation should use malloc + snprintf."""
+    """BUG-03: String interpolation should allocate using snprintf sizing."""
     gen = CCodeGenerator()
     stmt = ast.VarDeclaration(
         type_ann=ast.TypeAnnotation(base_type="string"),
@@ -48,9 +48,11 @@ def test_bug_03_string_interpolation():
     )
     program = ast.Program(statements=[name_decl, stmt])
     code = gen.generate(program)
-    assert "malloc(1024)" in code
+    assert "snprintf(NULL, 0" in code
+    assert "malloc((size_t)" in code
     assert "snprintf" in code
     assert "Hello %s!" in code
+    assert "({" not in code
 
 def test_bug_04_raii_destructor():
     """BUG-04: RAII destructor injection should be enabled."""
@@ -239,3 +241,53 @@ def test_for_range_body_raii_state_is_emitted_once_and_reused():
 
     assert gen._destructors == []
     assert code.count("Box_destruct(&b);") == 2
+
+def test_user_function_value_argument_does_not_use_compound_literal():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="add1",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="x")],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[ast.ReturnStatement(value=ast.BinaryExpr(
+                left=ast.Identifier(name="x"),
+                op="+",
+                right=ast.IntegerLiteral(value=1),
+            ))],
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="y",
+            initializer=ast.CallExpr(
+                callee=ast.Identifier(name="add1"),
+                args=[ast.IntegerLiteral(value=41)],
+                ref_flags=[False],
+            ),
+        ),
+    ])
+
+    code = gen.generate(program)
+
+    assert "add1(41)" in code
+    assert "&(" not in code
+
+def test_ref_argument_rvalue_uses_scoped_temp_not_compound_literal():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="touch",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="x", is_ref=True)],
+            body=[],
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="touch"),
+            args=[ast.IntegerLiteral(value=7)],
+            ref_flags=[False],
+        )),
+    ])
+
+    code = gen.generate(program)
+
+    assert "int _oda_tmp_" in code
+    assert "touch(&_oda_tmp_" in code
+    assert "&(" not in code

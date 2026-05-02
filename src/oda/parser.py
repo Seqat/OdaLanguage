@@ -743,15 +743,25 @@ class Parser:
         raise ParserError(f"Unexpected token: {t.value!r}", t.line, t.column, self.filename)
 
     def _parse_interpolated(self, t: Token) -> ast.InterpolatedString:
-        """Split 'Hello {name}!' into parts."""
+        """Split 'Hello {a + b}!' into literal and expression parts."""
         parts = []
         raw = t.value
         i = 0
         while i < len(raw):
             if raw[i] == "{":
-                j = raw.index("}", i)
-                var_name = raw[i + 1:j].strip()
-                parts.append(ast.Identifier(line=t.line, column=t.column, name=var_name))
+                try:
+                    j = raw.index("}", i)
+                except ValueError:
+                    raise ParserError("Unterminated interpolation expression", t.line, t.column, self.filename)
+                expr_src = raw[i + 1:j].strip()
+                if not expr_src:
+                    raise ParserError("Empty interpolation expression", t.line, t.column, self.filename)
+                from .lexer import Lexer
+                expr_tokens = Lexer(expr_src, self.filename).tokenize()
+                expr_parser = Parser(expr_tokens, self.filename)
+                expr = expr_parser._expression()
+                expr_parser._expect(TokenType.EOF, "Expected end of interpolation expression")
+                parts.append(expr)
                 i = j + 1
             else:
                 j = raw.find("{", i)
