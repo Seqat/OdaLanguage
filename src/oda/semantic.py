@@ -63,8 +63,14 @@ class SemanticAnalyzer:
         self.errors: list[SemanticError] = []
         self._current_class: str | None = None
         # Register built-in functions
-        for name in ("print", "input", "readFile"):
-            self.functions[name] = FuncInfo(name, ast.FuncDeclaration(name=name))
+        _BUILTINS = {
+            "print":    (None,     False),
+            "input":    ("string", False),
+            "readFile": ("string", True),   # is_nullable=True
+        }
+        for name, (ret, nullable) in _BUILTINS.items():
+            ret_ann = ast.TypeAnnotation(base_type=ret, is_nullable=nullable) if ret else None
+            self.functions[name] = FuncInfo(name, ast.FuncDeclaration(name=name, return_type=ret_ann))
 
     def _err(self, msg: str, node: ast.Node):
         self.errors.append(SemanticError(msg, node.line, node.column, self.filename))
@@ -236,6 +242,11 @@ class SemanticAnalyzer:
                     self._err("Cannot use a void function call as an argument", a)
         elif isinstance(expr, ast.MemberAccess):
             self._analyze_expr(expr.obj)
+            if expr.member.startswith("_") and self._current_class is None:
+                self._err(
+                    f"Cannot access private member '_{expr.member}' from outside its class",
+                    expr
+                )
         elif isinstance(expr, ast.IndexAccess):
             self._analyze_expr(expr.obj)
             self._analyze_expr(expr.index)

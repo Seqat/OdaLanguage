@@ -23,6 +23,8 @@ class CCodeGenerator:
         self._helpers_emitted: set[str] = set()
         self._class_names: set[str] = set()
         self._destructors: list[tuple[str, str]] = []  # (class, varname)
+        self._scope_starts: list[int] = []
+        self._func_starts: list[int] = []
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}  # variable name → oda type
         self._var_sizes: dict[str, list[int]] = {}  # dimensions for arrays
@@ -71,7 +73,9 @@ class CCodeGenerator:
         lines.append("")
         lines.append("int main(void) {")
         lines += ["    " + l for l in self._main]
-        # RAII: inject destructors (disabled for now)
+        # RAII: inject destructors
+        for class_name, var_name in reversed(self._destructors):
+            lines.append(f"    {class_name}_destruct(&{var_name});")
         lines.append("    return 0;")
         lines.append("}")
         lines.append("")
@@ -192,8 +196,10 @@ class CCodeGenerator:
             self._funcs.append(f"void {cls.name}_construct({params}) {{")
             body_lines: list[str] = []
             old_refs = self._ref_params
-            self._ref_params = {p.name for p in cls.constructor.params}
+            self._ref_params = {p.name for p in cls.constructor.params if p.is_ref}
+            self._func_starts.append(len(self._destructors))
             self._emit_block(cls.constructor.body, body_lines, cls.name)
+            self._func_starts.pop()
             self._ref_params = old_refs
             self._funcs += ["    " + l for l in body_lines]
             self._funcs.append("}")
@@ -210,8 +216,10 @@ class CCodeGenerator:
             self._funcs.append(f"{ret} {cls.name}_{m.name}({params}) {{")
             body_lines = []
             old_refs = self._ref_params
-            self._ref_params = {p.name for p in m.params}
+            self._ref_params = {p.name for p in m.params if p.is_ref}
+            self._func_starts.append(len(self._destructors))
             self._emit_block(m.body, body_lines, cls.name)
+            self._func_starts.pop()
             self._ref_params = old_refs
             self._funcs += ["    " + l for l in body_lines]
             self._funcs.append("}")
@@ -238,13 +246,15 @@ class CCodeGenerator:
         if func.return_type:
             ret = self._c_type(func.return_type)
         self._funcs.append(f"{ret} {func.name}({params}) {{")
-        # All params are passed as pointers to generalize ref support
+        # Only ref-marked parameters become pointers
         old_refs = self._ref_params
-        self._ref_params = {p.name for p in func.params}
+        self._ref_params = {p.name for p in func.params if p.is_ref}
         for p in func.params:
             self._var_types[p.name] = p.type_ann.base_type
         body_lines: list[str] = []
+        self._func_starts.append(len(self._destructors))
         self._emit_block(func.body, body_lines)
+        self._func_starts.pop()
         self._funcs += ["    " + l for l in body_lines]
         self._funcs.append("}")
         self._funcs.append("")
@@ -267,6 +277,11 @@ class CCodeGenerator:
         elif isinstance(stmt, ast.ForInStatement):
             self._emit_for_in(stmt, out, class_ctx)
         elif isinstance(stmt, ast.ReturnStatement):
+            if self._func_starts:
+                start = self._func_starts[-1]
+                for i in range(len(self._destructors) - 1, start - 1, -1):
+                    cn, vn = self._destructors[i]
+                    out.append(f"{cn}_destruct(&{vn});")
             if stmt.value:
                 out.append(f"return {self._expr(stmt.value, class_ctx)};")
             else:
@@ -281,8 +296,15 @@ class CCodeGenerator:
             self._emit_guard(stmt, out, class_ctx)
 
     def _emit_block(self, stmts: list, out: list[str], class_ctx: str | None = None):
+        self._scope_starts.append(len(self._destructors))
         for s in stmts:
             self._emit_stmt(s, out, class_ctx)
+        
+        # Block exit RAII
+        start = self._scope_starts.pop()
+        while len(self._destructors) > start:
+            cn, vn = self._destructors.pop()
+            out.append(f"{cn}_destruct(&{vn});")
 
     def _emit_array_expr(self, node, ta: ast.TypeAnnotation, class_ctx=None) -> str:
         if isinstance(node, ast.ArrayLiteral):
@@ -772,19 +794,21 @@ class CCodeGenerator:
         return "/* unknown call */"
 
     def _interp_string(self, node: ast.InterpolatedString, class_ctx=None) -> str:
-        """Build a sprintf call for interpolated strings."""
         fmt_parts, arg_list = [], []
         for part in node.parts:
             if isinstance(part, str):
-                fmt_parts.append(part.replace("%", "%%"))
-            elif isinstance(part, ast.Identifier):
-                fmt_parts.append("%s")
+                fmt_parts.append(part.replace("%", "%%").replace('"', '\\"'))
+            else:
+                t = self._infer_expr_type(part)
+                fmt_parts.append(self._get_fmt(t))
                 arg_list.append(self._expr(part, class_ctx))
-        fmt = "".join(fmt_parts).replace("\\", "\\\\").replace('"', '\\"')
+        fmt = "".join(fmt_parts)
         tmp = self._next_temp()
-        # We return the temp; caller must emit the buffer decl
-        args = ", ".join(arg_list)
-        return f'/* interp */ ({tmp})'  # simplified for MVP
+        args_str = (", " + ", ".join(arg_list)) if arg_list else ""
+        return (
+            f'({{ char* {tmp} = (char*)malloc(1024); '
+            f'snprintf({tmp}, 1024, "{fmt}"{args_str}); {tmp}; }})'
+        )
 
     def _looks_like_string(self, node) -> bool:
         if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):
@@ -826,5 +850,6 @@ class CCodeGenerator:
 
     def _param_c(self, p: ast.Parameter) -> str:
         ct = self._c_type(p.type_ann)
-        # ALL parameters are now pointers to generalize ref passing!
-        return f"{ct}* {p.name}"
+        if p.is_ref:
+            return f"{ct}* {p.name}"
+        return f"{ct} {p.name}"

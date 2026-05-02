@@ -1,5 +1,5 @@
 # Byte-compiled / optimized / DLL files
-oda/__pycache__/
+src/oda/__pycache__/
 *.py[cod]
 *$py.class
 
@@ -27,3 +27,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Agents
+.agents
