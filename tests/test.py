@@ -162,7 +162,7 @@ def test_for_in_known_array_passes():
     analyzer.analyze(program)
     assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
 
-def test_guard_emits_null_check():
+def test_guard_emits_error_dispatch():
     gen = CCodeGenerator()
     stmt = ast.GuardStatement(
         var_type=ast.TypeAnnotation(base_type="string"),
@@ -174,6 +174,9 @@ def test_guard_emits_null_check():
     gen._emit_guard(stmt, out)
     code = "\n".join(out)
     assert "if (content == NULL)" in code
+    assert "if (_oda_error == ODA_ERROR_FILE_NOT_FOUND)" in code
+    assert "oda: unhandled guard error" in code
+    assert "/* when(" not in code
 
 def test_guard_else_without_return_raises():
     analyzer = SemanticAnalyzer()
@@ -186,6 +189,18 @@ def test_guard_else_without_return_raises():
     program = ast.Program(statements=[stmt])
     analyzer.analyze(program)
     assert any("must exit" in e.message for e in analyzer.errors)
+
+def test_guard_unknown_error_type_raises():
+    analyzer = SemanticAnalyzer()
+    stmt = ast.GuardStatement(
+        var_type=ast.TypeAnnotation(base_type="string"),
+        var_name="content",
+        expr=ast.CallExpr(callee=ast.Identifier(name="readFile"), args=[ast.StringLiteral(value="config.txt")]),
+        cases=[ast.GuardCase(error_type="NetworkDown", body=[ast.ReturnStatement()])]
+    )
+    program = ast.Program(statements=[stmt])
+    analyzer.analyze(program)
+    assert any("Unknown error type 'NetworkDown'" in e.message for e in analyzer.errors)
 
 def test_guard_unwrapped_var_is_defined_after_block():
     gen = CCodeGenerator()
@@ -291,3 +306,568 @@ def test_ref_argument_rvalue_uses_scoped_temp_not_compound_literal():
     assert "int _oda_tmp_" in code
     assert "touch(&_oda_tmp_" in code
     assert "&(" not in code
+
+def test_heap_string_interpolation_is_freed_at_scope_exit():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="demo",
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="string"),
+                    name="msg",
+                    initializer=ast.InterpolatedString(parts=["value=", ast.IntegerLiteral(value=7)]),
+                )
+            ],
+        )
+    ])
+
+    code = gen.generate(program)
+
+    assert "char* msg = _oda_tmp_" in code
+    assert "free(msg);" in code
+    assert code.index("char* msg =") < code.index("free(msg);")
+    assert gen._heap_vars == []
+
+def test_heap_array_allocation_is_freed_at_scope_exit():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="demo",
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+                    name="nums",
+                    initializer=ast.ArrayAllocation(
+                        base_type="int",
+                        sizes=[ast.IntegerLiteral(value=3)],
+                    ),
+                )
+            ],
+        )
+    ])
+
+    code = gen.generate(program)
+
+    assert "int* nums = (int*)malloc(sizeof(int) * (3));" in code
+    assert "free(nums);" in code
+    assert gen._heap_vars == []
+
+def test_heap_var_is_freed_before_return():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="demo",
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="string"),
+                    name="line",
+                    initializer=ast.CallExpr(callee=ast.Identifier(name="input")),
+                ),
+                ast.ReturnStatement(),
+            ],
+        )
+    ])
+
+    code = gen.generate(program)
+
+    assert "char* line = _oda_input();" in code
+    assert "free(line);\n    return;" in code
+    assert code.count("free(line);") == 1
+    assert code.index("free(line);") < code.index("return;")
+
+def test_string_literal_var_is_not_tracked_as_heap():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="demo",
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="string"),
+                    name="label",
+                    initializer=ast.StringLiteral(value="static"),
+                )
+            ],
+        )
+    ])
+
+    code = gen.generate(program)
+
+    assert 'char* label = "static";' in code
+    assert "free(label);" not in code
+
+def test_print_string_concat_temp_is_freed_after_statement():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="count",
+            initializer=ast.IntegerLiteral(value=3),
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="print"),
+            args=[
+                ast.BinaryExpr(
+                    left=ast.StringLiteral(value="Count: "),
+                    op="+",
+                    right=ast.Identifier(name="count"),
+                )
+            ],
+            ref_flags=[False],
+        )),
+    ])
+
+    code = gen.generate(program)
+
+    assert 'printf("%s\\n", _oda_tmp_' in code
+    assert "_oda_str_concat(\"Count: \", _oda_tmp_" in code
+    assert "_oda_int_to_str(count)" in code
+    assert "free(_oda_tmp_" in code
+    assert code.index('printf("%s\\n", _oda_tmp_') < code.index("free(_oda_tmp_")
+    assert gen._heap_vars == []
+
+def test_heap_concat_initializer_owns_final_value_but_tracks_child_temp():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="count",
+            initializer=ast.IntegerLiteral(value=3),
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="string"),
+            name="msg",
+            initializer=ast.BinaryExpr(
+                left=ast.StringLiteral(value="Count: "),
+                op="+",
+                right=ast.Identifier(name="count"),
+            ),
+        ),
+    ])
+
+    code = gen.generate(program)
+
+    assert 'char* msg = _oda_str_concat("Count: ", _oda_tmp_' in code
+    assert "free(msg);" in code
+    assert "free(_oda_tmp_" in code
+    assert code.count("free(msg);") == 1
+    assert gen._heap_vars == []
+
+def test_if_block_variable_does_not_leak_to_outer_scope():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.IfStatement(
+            condition=ast.BoolLiteral(value=True),
+            body=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="int"),
+                    name="inside",
+                    initializer=ast.IntegerLiteral(value=1),
+                )
+            ],
+        ),
+        ast.ExpressionStatement(expr=ast.Identifier(name="inside")),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Undefined variable 'inside'" in e.message for e in analyzer.errors)
+
+def test_loop_variable_does_not_leak_to_outer_scope():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ForRangeStatement(
+            var_type=ast.TypeAnnotation(base_type="int"),
+            var_name="i",
+            start=ast.IntegerLiteral(value=0),
+            end=ast.IntegerLiteral(value=2),
+            body=[
+                ast.ExpressionStatement(expr=ast.Identifier(name="i")),
+            ],
+        ),
+        ast.ExpressionStatement(expr=ast.Identifier(name="i")),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Undefined variable 'i'" in e.message for e in analyzer.errors)
+
+def test_same_class_can_access_private_member_on_same_class_instance():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="Box",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="int"), name="_secret"),
+            ],
+            methods=[
+                ast.FuncDeclaration(
+                    name="reveal",
+                    params=[
+                        ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Box"), name="other"),
+                    ],
+                    body=[
+                        ast.ExpressionStatement(
+                            expr=ast.MemberAccess(obj=ast.Identifier(name="other"), member="_secret")
+                        )
+                    ],
+                )
+            ],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_different_class_cannot_access_private_member():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="Box",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="int"), name="_secret"),
+            ],
+        ),
+        ast.ClassDeclaration(
+            name="Spy",
+            methods=[
+                ast.FuncDeclaration(
+                    name="steal",
+                    params=[
+                        ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Box"), name="target"),
+                    ],
+                    body=[
+                        ast.ExpressionStatement(
+                            expr=ast.MemberAccess(obj=ast.Identifier(name="target"), member="_secret")
+                        )
+                    ],
+                )
+            ],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot access private member '_secret' outside class 'Box'" in e.message for e in analyzer.errors)
+
+def test_function_call_argument_count_is_checked():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="add",
+            params=[
+                ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="a"),
+                ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="b"),
+            ],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[ast.ReturnStatement(value=ast.Identifier(name="a"))],
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="add"),
+            args=[ast.IntegerLiteral(value=1)],
+            ref_flags=[False],
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("expects 2 argument(s), got 1" in e.message for e in analyzer.errors)
+
+def test_function_call_argument_type_is_checked():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="takes_int",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="x")],
+            body=[],
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="takes_int"),
+            args=[ast.StringLiteral(value="nope")],
+            ref_flags=[False],
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot pass 'string' to parameter of type 'int'" in e.message for e in analyzer.errors)
+
+def test_ref_parameter_requires_ref_keyword_and_lvalue():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="touch",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="x", is_ref=True)],
+            body=[],
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="value",
+            initializer=ast.IntegerLiteral(value=1),
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="touch"),
+            args=[ast.Identifier(name="value")],
+            ref_flags=[False],
+        )),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="touch"),
+            args=[ast.IntegerLiteral(value=1)],
+            ref_flags=[True],
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("must be passed with 'ref'" in e.message for e in analyzer.errors)
+    assert any("Cannot pass non-assignable expression as ref parameter" in e.message for e in analyzer.errors)
+
+def test_non_ref_parameter_rejects_ref_keyword():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="takes_int",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="x")],
+            body=[],
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="value",
+            initializer=ast.IntegerLiteral(value=1),
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="takes_int"),
+            args=[ast.Identifier(name="value")],
+            ref_flags=[True],
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("is not a ref parameter" in e.message for e in analyzer.errors)
+
+def test_heap_field_class_parameter_must_be_ref():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="NameBox",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="string"), name="name"),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_box",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="NameBox"), name="box")],
+            body=[],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("NameBox" in e.message and "must be passed by ref" in e.message for e in analyzer.errors)
+
+def test_heap_field_class_ref_parameter_is_allowed():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="NameBox",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="string"), name="name"),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_box",
+            params=[
+                ast.Parameter(
+                    type_ann=ast.TypeAnnotation(base_type="NameBox"),
+                    name="box",
+                    is_ref=True,
+                )
+            ],
+            body=[],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_array_field_class_parameter_must_be_ref():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="Buffer",
+            fields=[
+                ast.VarDeclaration(
+                    type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+                    name="items",
+                ),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_buffer",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Buffer"), name="buffer")],
+            body=[],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Buffer" in e.message and "must be passed by ref" in e.message for e in analyzer.errors)
+
+def test_nested_heap_field_class_parameter_must_be_ref():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="NameBox",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="string"), name="name"),
+            ],
+        ),
+        ast.ClassDeclaration(
+            name="Outer",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="NameBox"), name="inner"),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_outer",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Outer"), name="outer")],
+            body=[],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Outer" in e.message and "must be passed by ref" in e.message for e in analyzer.errors)
+
+def test_plain_class_parameter_can_be_passed_by_value():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="Point",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="int"), name="x"),
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="int"), name="y"),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_point",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Point"), name="point")],
+            body=[],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_heap_field_class_by_value_call_is_rejected():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.ClassDeclaration(
+            name="NameBox",
+            fields=[
+                ast.VarDeclaration(type_ann=ast.TypeAnnotation(base_type="string"), name="name"),
+            ],
+        ),
+        ast.FuncDeclaration(
+            name="takes_box",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="NameBox"), name="box")],
+            body=[],
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="NameBox"),
+            name="box",
+            initializer=ast.CallExpr(callee=ast.Identifier(name="NameBox")),
+        ),
+        ast.ExpressionStatement(expr=ast.CallExpr(
+            callee=ast.Identifier(name="takes_box"),
+            args=[ast.Identifier(name="box")],
+            ref_flags=[False],
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot pass class 'NameBox'" in e.message and "by value" in e.message for e in analyzer.errors)
+
+def test_returning_function_must_return_on_all_paths():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="maybe",
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[
+                ast.IfStatement(
+                    condition=ast.BoolLiteral(value=True),
+                    body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=1))],
+                )
+            ],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Not all code paths return a value" in e.message for e in analyzer.errors)
+
+def test_return_type_is_checked():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="bad",
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[ast.ReturnStatement(value=ast.StringLiteral(value="nope"))],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot return 'string' from function returning 'int'" in e.message for e in analyzer.errors)
+
+def test_int_to_uint_is_not_allowed():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="uint"),
+            name="u",
+            initializer=ast.IntegerLiteral(value=1),
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot coerce 'int' to 'uint'" in e.message for e in analyzer.errors)
+
+def test_deep_binary_expression_type_inference_rejects_invalid_operands():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="a",
+            initializer=ast.IntegerLiteral(value=1),
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="bool"),
+            name="b",
+            initializer=ast.BoolLiteral(value=True),
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="bad",
+            initializer=ast.BinaryExpr(
+                left=ast.BinaryExpr(
+                    left=ast.Identifier(name="a"),
+                    op="+",
+                    right=ast.IntegerLiteral(value=1),
+                ),
+                op="+",
+                right=ast.Identifier(name="b"),
+            ),
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Invalid operands for '+'" in e.message for e in analyzer.errors)

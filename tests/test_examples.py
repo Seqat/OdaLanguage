@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.c_sanitize import TEST_CFLAGS, run_generated_binary
+
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES_DIR = ROOT / "examples"
@@ -57,6 +59,7 @@ def test_example_transpiles_compiles_and_matches_golden(example):
             [
                 "gcc",
                 str(c_path),
+                *TEST_CFLAGS,
                 "-Wall",
                 "-Wextra",
                 "-Werror",
@@ -65,6 +68,12 @@ def test_example_transpiles_compiles_and_matches_golden(example):
             ],
             cwd=ROOT,
             check=True,
+            capture_output=True,
+            text=True,
+        )
+        run_generated_binary(
+            [str(out_dir / "test_bin")],
+            cwd=ROOT,
             capture_output=True,
             text=True,
         )

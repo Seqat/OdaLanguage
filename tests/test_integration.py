@@ -4,6 +4,8 @@ import tempfile
 from pathlib import Path
 from src.oda.main import _pipeline
 
+from tests.c_sanitize import TEST_CFLAGS, run_generated_binary
+
 def compile_and_run(oda_source: str) -> str:
     """Returns stdout of the compiled and executed Oda program."""
     c_code = _pipeline(oda_source, "<test>")
@@ -14,9 +16,9 @@ def compile_and_run(oda_source: str) -> str:
         # We need to include stdio.h, stdlib.h, string.h etc. 
         # _pipeline might already include them if it generates a full file.
         # Let's assume it does.
-        subprocess.run(["gcc", str(c_path), "-o", str(bin_path), "-O2"],
+        subprocess.run(["gcc", str(c_path), *TEST_CFLAGS, "-o", str(bin_path), "-O2"],
                        check=True, capture_output=True)
-        result = subprocess.run([str(bin_path)], capture_output=True, text=True)
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
         return result.stdout.strip()
 
 def test_hello_world():
@@ -145,10 +147,11 @@ print(add1(41))
 '''
     assert compile_and_run(src) == "42"
 
-def test_ref_parameter_rvalue_argument_compiles_with_temp():
+def test_ref_parameter_identifier_argument_compiles():
     src = '''
 func touch(ref int x) { print(x) }
-touch(7)
+int value = 7
+touch(ref value)
 '''
     assert compile_and_run(src) == "7"
 
@@ -181,6 +184,44 @@ func check() {
 check()
 '''
     assert compile_and_run(src) == "missing"
+
+def test_guard_error_dispatch_generates_strict_c_and_runs():
+    src = '''
+func check() {
+    guard string content = readFile("definitely_missing_oda_file.txt") else {
+        when (FileNotFound) {
+            print("missing")
+            return
+        }
+        when (IoError) {
+            print("io")
+            return
+        }
+    }
+    print(content)
+}
+check()
+'''
+    c_code = _pipeline(src, "<test>")
+    assert "typedef enum {" in c_code
+    assert "ODA_ERROR_FILE_NOT_FOUND" in c_code
+    assert "_oda_error == ODA_ERROR_FILE_NOT_FOUND" in c_code
+    assert "} else if (_oda_error == ODA_ERROR_IO)" in c_code
+    assert "/* when(" not in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "missing"
 
 def test_guard_case_must_exit_in_pipeline():
     src = '''
