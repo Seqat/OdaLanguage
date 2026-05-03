@@ -8,10 +8,15 @@ from .errors import SemanticError
 class Importer:
     def __init__(self, entry_file: str):
         self.base_dir = Path(entry_file).parent.resolve()
+        self.repo_root = Path(__file__).resolve().parents[2]
         self.visited = set()
         self.combined_statements = []
+        self.module_exports: dict[str, dict[str, str]] = {}
+        self.c_headers: set[str] = set()
 
     def load_entry(self, source: str, filename: str) -> ast.Program:
+        self._load_prelude()
+
         tokens = Lexer(source, filename).tokenize()
         prog = Parser(tokens, filename).parse()
         self.visited.add(Path(filename).resolve())
@@ -21,16 +26,36 @@ class Importer:
         self._process_program(prog, prefix="", current_file=filename)
         
         final_prog = ast.Program(statements=self.combined_statements)
+        final_prog.c_headers = set(self.c_headers)
         return final_prog
+
+    def _load_prelude(self):
+        prelude = self.repo_root / "std" / "prelude.oda"
+        if not prelude.exists() or prelude.resolve() in self.visited:
+            return
+        self.visited.add(prelude.resolve())
+        src = prelude.read_text()
+        tokens = Lexer(src, str(prelude)).tokenize()
+        prog = Parser(tokens, str(prelude)).parse()
+        self._process_program(prog, prefix="", current_file=str(prelude))
+
+    def _resolve_module_file(self, module_path: str) -> Path:
+        mod_path_str = module_path[:-4] if module_path.endswith(".oda") else module_path
+        parts = mod_path_str.split(".")
+        if parts and parts[0] == "std":
+            return self.repo_root.joinpath(*parts).with_suffix(".oda")
+        return self.base_dir.joinpath(*parts).with_suffix(".oda")
 
     def _process_program(self, prog: ast.Program, prefix: str, current_file: str):
         # 1. Collect top-level declarations in this module
         mod_decls = {} # original_name -> mangled_name
         for stmt in prog.statements:
             if isinstance(stmt, ast.FuncDeclaration):
-                mangled = f"{prefix}_{stmt.name}" if prefix else stmt.name
+                mangled = stmt.name if stmt.is_extern else (f"{prefix}_{stmt.name}" if prefix else stmt.name)
                 mod_decls[stmt.name] = mangled
                 stmt.name = mangled
+                if stmt.is_extern and prefix.startswith("std_"):
+                    stmt.extern_header = self._std_header_for_prefix(prefix)
             elif isinstance(stmt, ast.ClassDeclaration):
                 mangled = f"{prefix}_{stmt.name}" if prefix else stmt.name
                 mod_decls[stmt.name] = mangled
@@ -45,8 +70,11 @@ class Importer:
                 mod_decls[stmt.name] = mangled
                 stmt.name = mangled
 
+        if prefix:
+            self.module_exports[prefix] = dict(mod_decls)
+
         # 2. Process imports and build alias map
-        alias_map = {} # alias -> module_prefix
+        alias_map = {} # alias -> exported member map
         direct_imports = {} # local_name -> mangled_name
 
         new_stmts = []
@@ -58,22 +86,13 @@ class Importer:
                     mod_path_str = mod_path_str[:-4]
                 
                 parts = mod_path_str.split('.')
-                mod_file = self.base_dir.joinpath(*parts).with_suffix('.oda')
+                mod_file = self._resolve_module_file(stmt.module_path)
                 
                 if not mod_file.exists():
                     raise SemanticError(f"Module not found: {stmt.module_path}", stmt.line, stmt.column, current_file)
 
                 mod_prefix = "_".join(parts)
-                
-                if stmt.names: # from a import b, c
-                    for n in stmt.names:
-                        if n.startswith('_'):
-                            raise SemanticError(f"Cannot import private member '{n}'", stmt.line, stmt.column, current_file)
-                        direct_imports[n] = f"{mod_prefix}_{n}"
-                else: # import a.b as c or import a.b
-                    alias = stmt.alias if stmt.alias else parts[-1]
-                    alias_map[alias] = mod_prefix
-                
+
                 # Load the module if not visited
                 if mod_file.resolve() not in self.visited:
                     self.visited.add(mod_file.resolve())
@@ -81,6 +100,20 @@ class Importer:
                     tokens = Lexer(src, str(mod_file)).tokenize()
                     mod_prog = Parser(tokens, str(mod_file)).parse()
                     self._process_program(mod_prog, prefix=mod_prefix, current_file=str(mod_file))
+
+                header = self._std_header_for_prefix(mod_prefix)
+                if header:
+                    self.c_headers.add(header)
+
+                exports = self.module_exports.get(mod_prefix, {})
+                if stmt.names: # from a import b, c
+                    for n in stmt.names:
+                        if n.startswith('_'):
+                            raise SemanticError(f"Cannot import private member '{n}'", stmt.line, stmt.column, current_file)
+                        direct_imports[n] = exports.get(n, f"{mod_prefix}_{n}")
+                else: # import a.b as c or import a.b
+                    alias = stmt.alias if stmt.alias else parts[-1]
+                    alias_map[alias] = exports
 
             else:
                 new_stmts.append(stmt)
@@ -139,20 +172,25 @@ class Importer:
                 # Special handling for MemberAccess rewrite
                 if k == 'callee' and isinstance(v, ast.MemberAccess):
                     if isinstance(v.obj, ast.Identifier) and v.obj.name in alias_map:
-                        mod_prefix = alias_map[v.obj.name]
                         if v.member.startswith('_'):
                             raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown")
-                        new_name = f"{mod_prefix}_{v.member}"
+                        new_name = alias_map[v.obj.name].get(v.member, v.member)
                         setattr(nodes, k, ast.Identifier(name=new_name, line=v.line, column=v.column))
                         continue
                 
                 if k == 'expr' and isinstance(v, ast.MemberAccess):
                     if isinstance(v.obj, ast.Identifier) and v.obj.name in alias_map:
-                        mod_prefix = alias_map[v.obj.name]
                         if v.member.startswith('_'):
                             raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown")
-                        new_name = f"{mod_prefix}_{v.member}"
+                        new_name = alias_map[v.obj.name].get(v.member, v.member)
                         setattr(nodes, k, ast.Identifier(name=new_name, line=v.line, column=v.column))
                         continue
 
                 self._rewrite_nodes(v, mod_decls, alias_map, direct_imports)
+
+    def _std_header_for_prefix(self, prefix: str) -> str | None:
+        if prefix == "std_math":
+            return "math.h"
+        if prefix == "std_string":
+            return "string.h"
+        return None

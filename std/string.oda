@@ -1,0 +1,1 @@
+extern func strlen(string value) -> uint

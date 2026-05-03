@@ -33,6 +33,19 @@ def test_parses_function_with_ref_param_and_return_type():
     assert isinstance(func.body[0], ast.ReturnStatement)
 
 
+def test_parses_extern_function_signature_without_body():
+    program = parse("extern func abs(int value) -> int")
+    func = program.statements[0]
+
+    assert isinstance(func, ast.FuncDeclaration)
+    assert func.is_extern
+    assert func.name == "abs"
+    assert func.params[0].name == "value"
+    assert func.params[0].type_ann.base_type == "int"
+    assert func.return_type.base_type == "int"
+    assert func.body == []
+
+
 def test_parses_class_with_constructor_destructor_and_method():
     program = parse(
         """
@@ -84,6 +97,17 @@ def test_parses_multidimensional_for_in_loop():
     assert stmt.var_name == "row"
     assert stmt.is_reversed
     assert stmt.step.value == 2
+
+
+def test_parses_for_in_loop_with_index_variable():
+    program = parse("for (int i, int n in nums) { print(i + n) }")
+    stmt = program.statements[0]
+
+    assert isinstance(stmt, ast.ForInStatement)
+    assert stmt.index_type.base_type == "int"
+    assert stmt.index_name == "i"
+    assert stmt.var_type.base_type == "int"
+    assert stmt.var_name == "n"
 
 
 def test_parses_guard_cases():

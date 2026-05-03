@@ -2,7 +2,9 @@
 
 > **"The safest room for code."**
 
-OdaLanguage is a safe, readable, semi-statically typed programming language that transpiles to C. Its long-term goal is to become a deterministic and safe target language for AI-generated systems code.
+OdaLanguage is a **safe, deterministic target language for AI-generated systems code**. It gives AI agents a small, inspectable language that transpiles to standard C while enforcing strict semantic checks before code generation.
+
+The goal is not to replace C as a systems substrate. The goal is to give generated systems code a safer source language with explicit memory scopes, conservative type rules, predictable lowering, and machine-readable compiler feedback that an agent can use for correction loops.
 
 The compiler pipeline is intentionally simple:
 
@@ -32,6 +34,9 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 | Unsigned integers | `uint` values can be written with a `u` suffix, such as `5u`. |
 | File and console I/O | `readFile()` and `input()` builtins. |
 | Strict semantic checking | Semantic errors stop compilation before C generation. |
+| Explicit memory scopes | Block scopes isolate variables and generated RAII cleanup is tied to lexical scope exits. |
+| Machine-readable diagnostics | `--output-format=json` emits parser and semantic errors as structured JSON. |
+| AST export | `export-ast` serializes parsed code structure as JSON for agent analysis. |
 
 ## Quick Start
 
@@ -45,8 +50,43 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 # Transpile, compile, and run
 ./oda run examples/hello.oda
 
+# Export parsed AST as JSON
+./oda export-ast examples/hello.oda
+# Equivalent flag form
+./oda --export-ast examples/hello.oda
+
+# Emit machine-readable diagnostics for correction loops
+./oda transpile examples/hello.oda --output-format=json
+
 # Run the compiler test suite
 make test
+```
+
+## AI-Agent Tooling
+
+OdaLanguage is designed to be useful inside automated code-generation loops:
+
+- **Strict static checks:** undefined variables, private member access, function call arity, argument types, `ref` matching, return coverage, unsafe implicit numeric conversions, and invalid binary expressions are rejected before C is emitted.
+- **Explicit memory scopes:** lexical blocks create nested environments, RAII destructors are emitted at scope exits, and generated C avoids non-standard lifetime tricks where possible.
+- **Machine-readable diagnostics:** parser and semantic failures can be emitted as a JSON array with `file`, `line`, `column`, `error_type`, and `message`.
+- **Machine-readable structure:** `export-ast` emits the parsed AST as JSON with `node_type`, source positions, declarations, statements, expressions, and type annotations.
+
+Example diagnostic output:
+
+```bash
+./oda transpile examples/broken.oda --output-format=json
+```
+
+```json
+[
+  {
+    "file": "examples/broken.oda",
+    "line": 1,
+    "column": 7,
+    "error_type": "SemanticError",
+    "message": "Undefined variable 'missing_value'"
+  }
+]
 ```
 
 ## Example Programs

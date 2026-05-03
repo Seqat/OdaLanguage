@@ -28,6 +28,7 @@ class TokenType(Enum):
     FUNC        = auto()
     CLASS       = auto()
     ENUM        = auto()
+    EXTERN      = auto()
     CONSTRUCT   = auto()
     DESTRUCT    = auto()
 
@@ -125,6 +126,7 @@ KEYWORDS: dict[str, TokenType] = {
     "func":      TokenType.FUNC,
     "class":     TokenType.CLASS,
     "enum":      TokenType.ENUM,
+    "extern":    TokenType.EXTERN,
     "construct": TokenType.CONSTRUCT,
     "destruct":  TokenType.DESTRUCT,
     "if":        TokenType.IF,

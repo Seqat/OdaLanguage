@@ -1,10 +1,14 @@
+import json
 import pytest
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from src.oda.main import _pipeline
 
 from tests.c_sanitize import TEST_CFLAGS, run_generated_binary
+
+ROOT = Path(__file__).resolve().parents[1]
 
 def compile_and_run(oda_source: str) -> str:
     """Returns stdout of the compiled and executed Oda program."""
@@ -24,6 +28,60 @@ def compile_and_run(oda_source: str) -> str:
 def test_hello_world():
     assert compile_and_run('print("Hello World")') == "Hello World"
 
+def test_prelude_is_implicit_and_keeps_headers_minimal():
+    c_code = _pipeline("int x = 1\nassert(x == 1)\nprint(x)", "<test>")
+
+    assert "#include <stdio.h>" in c_code
+    assert "#include <stdlib.h>" in c_code
+    assert "#include <math.h>" not in c_code
+    assert "#include <string.h>" not in c_code
+    assert "print(" not in c_code
+    assert "_oda_assert" in c_code
+    assert compile_and_run("int x = 1\nassert(x == 1)\nprint(x)") == "1"
+
+def test_std_string_module_requires_explicit_import_and_header():
+    src = '''
+import std.string as strings
+uint length = strings.strlen("abcd")
+print(length)
+'''
+    c_code = _pipeline(src, "<test>")
+
+    assert "#include <string.h>" in c_code
+    assert "strlen(\"abcd\")" in c_code
+    assert "strlen(char*" not in c_code
+    assert compile_and_run(src) == "4"
+
+def test_std_math_module_imports_math_header_and_uses_c_symbol():
+    src = '''
+import std.math
+float value = math.sin(0.0)
+print(value)
+'''
+    c_code = _pipeline(src, "<test>")
+
+    assert "#include <math.h>" in c_code
+    assert "sin(0.0)" in c_code
+    assert "sin(double" not in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path), "-lm"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "0.000000"
+
+def test_std_module_functions_are_not_available_without_import():
+    with pytest.raises(SystemExit):
+        compile_and_run("float value = math.sin(0.0)\nprint(value)")
+
 def test_null_coalescing():
     src = 'string? x = null\nprint(x ?? "default")'
     assert compile_and_run(src) == "default"
@@ -35,6 +93,24 @@ def test_range_loop():
 def test_array_iteration():
     src = 'int[] nums = [10, 20, 30]\nfor (int n in nums) { print(n) }'
     assert compile_and_run(src) == "10\n20\n30"
+
+def test_array_iteration_with_index_and_value():
+    src = '''
+int[] nums = [10, 20, 30]
+for (int i, int n in nums) {
+    print(i * 100 + n)
+}
+'''
+    assert compile_and_run(src) == "10\n120\n230"
+
+def test_string_iteration_with_index_and_value_reversed():
+    src = '''
+string text = "abc"
+for (int i, char ch in text reversed) {
+    print(i * 100 + ch)
+}
+'''
+    assert compile_and_run(src) == "299\n198\n97"
 
 def test_raii_destructor_called():
     src = '''
@@ -146,6 +222,30 @@ func add1(int x) -> int { return x + 1 }
 print(add1(41))
 '''
     assert compile_and_run(src) == "42"
+
+def test_extern_standard_c_function_call_compiles_and_runs():
+    src = '''
+extern func abs(int value) -> int
+int distance = abs(-42)
+print(distance)
+'''
+    c_code = _pipeline(src, "<test>")
+    assert "int abs(int value);" in c_code
+    assert "int abs(int value) {" not in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "42"
 
 def test_ref_parameter_identifier_argument_compiles():
     src = '''
@@ -311,3 +411,115 @@ guard string content = readFile("definitely_missing_oda_file.txt") else {
 '''
     with pytest.raises(SystemExit):
         compile_and_run(src)
+
+def test_cli_json_output_for_semantic_errors():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "bad_semantic.oda"
+        src_path.write_text("print(missing_value)\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "oda"),
+                "transpile",
+                str(src_path),
+                "--output-format=json",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stderr)
+    assert payload == [
+        {
+            "file": str(src_path),
+            "line": 1,
+            "column": 7,
+            "error_type": "SemanticError",
+            "message": "Undefined variable 'missing_value'",
+        }
+    ]
+
+def test_cli_json_output_for_parser_errors():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "bad_parse.oda"
+        src_path.write_text("int = 1\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "oda"),
+                "transpile",
+                str(src_path),
+                "--output-format=json",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stderr)
+    assert len(payload) == 1
+    assert payload[0]["file"] == str(src_path)
+    assert payload[0]["line"] == 1
+    assert payload[0]["error_type"] == "ParserError"
+    assert "Expected variable name" in payload[0]["message"]
+
+def test_cli_export_ast_outputs_machine_readable_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "ast.oda"
+        src_path.write_text("int answer = 42\nprint(answer)\n")
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "oda"), "export-ast", str(src_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["node_type"] == "Program"
+    statements = payload["statements"]
+    assert any(
+        stmt["node_type"] == "VarDeclaration" and stmt["name"] == "answer"
+        for stmt in statements
+    )
+    assert any(stmt["node_type"] == "ExpressionStatement" for stmt in statements)
+
+def test_cli_export_ast_flag_outputs_machine_readable_json():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "ast_flag.oda"
+        src_path.write_text("int answer = 42\n")
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "oda"), "--export-ast", str(src_path)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 0
+    payload = json.loads(result.stdout)
+    assert payload["node_type"] == "Program"
+
+def test_cli_export_ast_json_errors_on_parse_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "bad_ast.oda"
+        src_path.write_text("int = 1\n")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "oda"),
+                "export-ast",
+                str(src_path),
+                "--output-format=json",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+    assert result.returncode == 1
+    payload = json.loads(result.stderr)
+    assert len(payload) == 1
+    assert payload[0]["error_type"] == "ParserError"

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import sys
+from typing import TextIO
+
 
 class OdaError(Exception):
     """Base error for all compiler errors."""
@@ -16,6 +20,15 @@ class OdaError(Exception):
 
     def format(self) -> str:
         return f"{self.filename}:{self.line}:{self.column}: error: {self.message}"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "file": self.filename,
+            "line": self.line,
+            "column": self.column,
+            "error_type": type(self).__name__,
+            "message": self.message,
+        }
 
 
 class LexerError(OdaError):
@@ -55,10 +68,18 @@ class ErrorReporter:
     def has_errors(self) -> bool:
         return len(self.errors) > 0
 
-    def dump(self) -> None:
+    def dump(self, output_format: str = "text", stream: TextIO | None = None) -> None:
+        stream = stream or sys.stdout
+        if output_format == "json":
+            print(format_errors_json(self.errors), file=stream)
+            return
         for w in self.warnings:
-            print(w)
+            print(w, file=stream)
         for e in self.errors:
-            print(e.format())
+            print(e.format(), file=stream)
         if self.errors:
-            print(f"\n  ✗ {len(self.errors)} error(s) found. Compilation aborted.")
+            print(f"\n  ✗ {len(self.errors)} error(s) found. Compilation aborted.", file=stream)
+
+
+def format_errors_json(errors: list[OdaError]) -> str:
+    return json.dumps([err.to_dict() for err in errors], indent=2)

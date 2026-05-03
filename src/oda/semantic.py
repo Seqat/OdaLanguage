@@ -83,6 +83,14 @@ class SemanticAnalyzer:
             "input",
             ast.FuncDeclaration(name="input", params=[], return_type=ast.TypeAnnotation(base_type="string")),
         )
+        self.functions["assert"] = FuncInfo(
+            "assert",
+            ast.FuncDeclaration(
+                name="assert",
+                params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="bool"), name="condition")],
+                return_type=None,
+            ),
+        )
         self.functions["readFile"] = FuncInfo(
             "readFile",
             ast.FuncDeclaration(
@@ -172,6 +180,8 @@ class SemanticAnalyzer:
                 if sym and sym.type_ann and sym.type_ann.is_array:
                     # In Oda, arrays declared like 'int[3] nums' or 'int[] nums = [1,2,3]' have known size
                     is_valid = True
+                elif sym and sym.type_ann and sym.type_ann.base_type == "string":
+                    is_valid = True
             elif isinstance(stmt.iterable, ast.InterpolatedString) or isinstance(stmt.iterable, ast.StringLiteral):
                 is_valid = True
             elif self._infer_type(stmt.iterable) == "string":
@@ -184,6 +194,8 @@ class SemanticAnalyzer:
 
             self._push_scope("for-in")
             try:
+                if stmt.index_name:
+                    self.scope.define(Symbol(stmt.index_name, stmt.index_type))
                 self.scope.define(Symbol(stmt.var_name, stmt.var_type))
                 self._analyze_block(stmt.body)
             finally:
@@ -281,6 +293,8 @@ class SemanticAnalyzer:
         )
 
     def _check_param_decl(self, param: ast.Parameter, owner_name: str):
+        if not self._type_exists(param.type_ann):
+            self._err(f"Unknown type '{param.type_ann.base_type}'", param)
         if self._param_requires_ref(param) and not param.is_ref:
             self._err(
                 f"Parameter '{param.name}' of function '{owner_name}' has class "
@@ -313,12 +327,18 @@ class SemanticAnalyzer:
         self.scope.define(Symbol(stmt.name, stmt.type_ann, is_immutable=stmt.is_immutable))
 
     def _analyze_func(self, stmt: ast.FuncDeclaration):
+        for p in stmt.params:
+            self._check_param_decl(p, stmt.name)
+        if stmt.return_type and not self._type_exists(stmt.return_type):
+            self._err(f"Unknown return type '{stmt.return_type.base_type}'", stmt)
+        if stmt.is_extern:
+            return
+
         old_scope = self.scope
         old_return_type = self._current_return_type
         self.scope = Scope(old_scope, f"func:{stmt.name}")
         self._current_return_type = stmt.return_type
         for p in stmt.params:
-            self._check_param_decl(p, stmt.name)
             self.scope.define(Symbol(p.name, p.type_ann, is_ref=p.is_ref))
         self._analyze_block(stmt.body)
         if stmt.return_type and not self._block_always_returns(stmt.body):
@@ -682,8 +702,15 @@ class SemanticAnalyzer:
         return None
 
     def _common_numeric_type(self, left: str | None, right: str | None) -> str | None:
-        if left not in ("int", "uint", "float") or right not in ("int", "uint", "float"):
+        numeric = ("char", "int", "uint", "float")
+        if left not in numeric or right not in numeric:
             return None
+        if left == right:
+            return left
+        if left == "char":
+            left = "int"
+        if right == "char":
+            right = "int"
         if left == right:
             return left
         if left == "float" and self._can_coerce(right, "float"):

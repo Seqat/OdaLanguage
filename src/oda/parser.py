@@ -66,6 +66,8 @@ class Parser:
             return self._var_or_expr()
         if t.type == TokenType.FUNC:
             return self._func_decl()
+        if t.type == TokenType.EXTERN:
+            return self._extern_func_decl()
         if t.type == TokenType.CLASS:
             return self._class_decl()
         if t.type == TokenType.ENUM:
@@ -192,6 +194,28 @@ class Parser:
         self._expect(TokenType.RBRACE)
         return ast.FuncDeclaration(line=t.line, column=t.column,
                                    name=name, params=params, return_type=ret, body=body)
+
+    def _extern_func_decl(self) -> ast.FuncDeclaration:
+        t = self._advance()  # 'extern'
+        self._expect(TokenType.FUNC, "Expected 'func' after 'extern'")
+        name = self._expect(TokenType.IDENTIFIER, "Expected external function name").value
+        self._expect(TokenType.LPAREN)
+        params = self._param_list()
+        self._expect(TokenType.RPAREN)
+        ret = None
+        if self._at(TokenType.ARROW):
+            self._advance()
+            ret = self._type_annotation()
+        self._consume_terminator()
+        return ast.FuncDeclaration(
+            line=t.line,
+            column=t.column,
+            name=name,
+            params=params,
+            return_type=ret,
+            body=[],
+            is_extern=True,
+        )
 
     def _param_list(self) -> list[ast.Parameter]:
         params = []
@@ -351,15 +375,8 @@ class Parser:
                 break
             p += 1
 
-        p = 0
-        if self._peek(p).type in TYPE_TOKENS or self._peek(p).type == TokenType.IDENTIFIER:
-            p += 1
-            while self._peek(p).type == TokenType.LBRACKET:
-                p += 1
-                if self._peek(p).type == TokenType.INTEGER: p += 1
-                if self._peek(p).type == TokenType.RBRACKET: p += 1
-            if self._peek(p).type == TokenType.IDENTIFIER and self._peek(p+1).type == TokenType.IN:
-                is_for_in = True
+        if self._looks_like_for_in_header():
+            is_for_in = True
         
         if is_for_in:
             return self._for_range(t)
@@ -400,6 +417,14 @@ class Parser:
     def _for_range(self, t: Token):
         vt = self._type_annotation()
         vn = self._expect(TokenType.IDENTIFIER).value
+        index_type = None
+        index_name = None
+        if self._at(TokenType.COMMA):
+            self._advance()
+            index_type = vt
+            index_name = vn
+            vt = self._type_annotation()
+            vn = self._expect(TokenType.IDENTIFIER).value
         self._expect(TokenType.IN, "Expected 'in'")
         expr = self._expression()
         
@@ -441,8 +466,39 @@ class Parser:
         self._expect(TokenType.RBRACE)
         return ast.ForInStatement(line=t.line, column=t.column,
                                    var_type=vt, var_name=vn,
+                                   index_type=index_type,
+                                   index_name=index_name,
                                    iterable=expr, is_reversed=is_reversed,
                                    step=step, body=body)
+
+    def _looks_like_for_in_header(self) -> bool:
+        p = self._skip_type_tokens(0)
+        if p is None or self._peek(p).type != TokenType.IDENTIFIER:
+            return False
+        p += 1
+        if self._peek(p).type == TokenType.IN:
+            return True
+        if self._peek(p).type != TokenType.COMMA:
+            return False
+        p = self._skip_type_tokens(p + 1)
+        if p is None or self._peek(p).type != TokenType.IDENTIFIER:
+            return False
+        return self._peek(p + 1).type == TokenType.IN
+
+    def _skip_type_tokens(self, p: int) -> int | None:
+        if self._peek(p).type not in TYPE_TOKENS and self._peek(p).type != TokenType.IDENTIFIER:
+            return None
+        p += 1
+        if self._peek(p).type in (TokenType.QUESTION, TokenType.NOT):
+            p += 1
+        while self._peek(p).type == TokenType.LBRACKET:
+            p += 1
+            if self._peek(p).type == TokenType.INTEGER:
+                p += 1
+            if self._peek(p).type != TokenType.RBRACKET:
+                return None
+            p += 1
+        return p
 
     def _var_decl_inline(self):
         t = self._cur()
@@ -542,11 +598,17 @@ class Parser:
                                    module_path=path, alias=alias)
 
     def _dotted_name(self) -> str:
-        parts = [self._expect(TokenType.IDENTIFIER).value]
+        parts = [self._expect_dotted_part().value]
         while self._at(TokenType.DOT):
             self._advance()
-            parts.append(self._expect(TokenType.IDENTIFIER).value)
+            parts.append(self._expect_dotted_part().value)
         return ".".join(parts)
+
+    def _expect_dotted_part(self) -> Token:
+        if self._cur().type == TokenType.IDENTIFIER or self._cur().type in TYPE_TOKENS:
+            return self._advance()
+        t = self._cur()
+        raise ParserError(f"Expected module path component, got {t.value!r}", t.line, t.column, self.filename)
 
     # ── block (list of statements) ───────────────────────────
     def _block(self) -> list:

@@ -60,6 +60,8 @@ class FuncDeclaration:
     params: list = field(default_factory=list)
     return_type: Optional[TypeAnnotation] = None
     body: list = field(default_factory=list)
+    is_extern: bool = False
+    extern_header: Optional[str] = None
     line: int = 0
     column: int = 0
 
@@ -121,6 +123,8 @@ class ForRangeStatement:
 class ForInStatement:
     var_type: Optional[TypeAnnotation] = None
     var_name: str = ""
+    index_type: Optional[TypeAnnotation] = None
+    index_name: Optional[str] = None
     iterable: Optional[object] = None
     is_reversed: bool = False
     step: Optional[object] = None

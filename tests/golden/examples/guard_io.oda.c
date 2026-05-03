@@ -2,7 +2,6 @@
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 #if defined(__GNUC__) || defined(__clang__)
 #define ODA_UNUSED __attribute__((unused))
@@ -24,53 +23,6 @@ typedef enum {
 } OdaError;
 
 static ODA_THREAD_LOCAL ODA_UNUSED OdaError _oda_error = ODA_ERROR_NONE;
-
-static ODA_UNUSED char* _oda_int_to_str(int v) {
-    char* buf = (char*)malloc(24);
-    snprintf(buf, 24, "%d", v);
-    return buf;
-}
-
-static ODA_UNUSED char* _oda_float_to_str(double v) {
-    char* buf = (char*)malloc(48);
-    snprintf(buf, 48, "%g", v);
-    return buf;
-}
-
-static ODA_UNUSED char* _oda_str_concat(const char* a, const char* b) {
-    size_t la = strlen(a), lb = strlen(b);
-    char* r = (char*)malloc(la + lb + 1);
-    memcpy(r, a, la);
-    memcpy(r + la, b, lb + 1);
-    return r;
-}
-
-static ODA_UNUSED char* _oda_input() {
-    size_t cap = 64;
-    size_t len = 0;
-    char* buf = (char*)malloc(cap);
-    if (!buf) {
-        fprintf(stderr, "oda: input allocation failed\n");
-        exit(1);
-    }
-    int ch;
-    while ((ch = fgetc(stdin)) != EOF && ch != '\n') {
-        if (len + 1 >= cap) {
-            size_t new_cap = cap * 2;
-            char* new_buf = (char*)realloc(buf, new_cap);
-            if (!new_buf) {
-                free(buf);
-                fprintf(stderr, "oda: input allocation failed\n");
-                exit(1);
-            }
-            buf = new_buf;
-            cap = new_cap;
-        }
-        buf[len++] = (char)ch;
-    }
-    buf[len] = '\0';
-    return buf;
-}
 
 static ODA_UNUSED char* _oda_read_file(const char* path) {
     errno = 0;

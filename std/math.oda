@@ -1,0 +1,3 @@
+extern func sin(float value) -> float
+extern func cos(float value) -> float
+extern func sqrt(float value) -> float

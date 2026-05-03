@@ -83,6 +83,22 @@ def test_lexes_enum_keyword():
     ]
 
 
+def test_lexes_extern_keyword():
+    tokens = tokens_without_eof("extern func abs(int x) -> int")
+
+    assert [tok.type for tok in tokens] == [
+        TokenType.EXTERN,
+        TokenType.FUNC,
+        TokenType.IDENTIFIER,
+        TokenType.LPAREN,
+        TokenType.INT,
+        TokenType.IDENTIFIER,
+        TokenType.RPAREN,
+        TokenType.ARROW,
+        TokenType.INT,
+    ]
+
+
 def test_skips_line_and_block_comments():
     tokens = tokens_without_eof('int x = 1 // ignored\n//* ignored\nstill ignored *//\nprint(x)')
 

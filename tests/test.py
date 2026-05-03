@@ -33,6 +33,45 @@ def test_bug_02_pass_by_value():
     assert "int* b" in code
     assert not re.search(r"int\*\s+a", code)
 
+def test_extern_function_emits_prototype_not_body():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="abs",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="value")],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            is_extern=True,
+        )
+    ])
+
+    code = gen.generate(program)
+
+    assert "int abs(int value);" in code
+    assert "int abs(int value) {" not in code
+
+def test_extern_function_participates_in_semantic_call_checking():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="abs",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="int"), name="value")],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            is_extern=True,
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="distance",
+            initializer=ast.CallExpr(
+                callee=ast.Identifier(name="abs"),
+                args=[ast.IntegerLiteral(value=-7)],
+            ),
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
 def test_bug_03_string_interpolation():
     """BUG-03: String interpolation should allocate using snprintf sizing."""
     gen = CCodeGenerator()
@@ -219,6 +258,70 @@ def test_for_in_known_array_passes():
     program = ast.Program(statements=[nums_decl, for_stmt])
     analyzer.analyze(program)
     assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_for_in_index_variable_is_in_body_scope():
+    analyzer = SemanticAnalyzer()
+    nums_decl = ast.VarDeclaration(
+        type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+        name="nums",
+        initializer=ast.ArrayLiteral(elements=[ast.IntegerLiteral(value=1)])
+    )
+    for_stmt = ast.ForInStatement(
+        index_type=ast.TypeAnnotation(base_type="int"),
+        index_name="i",
+        var_type=ast.TypeAnnotation(base_type="int"),
+        var_name="x",
+        iterable=ast.Identifier(name="nums"),
+        body=[
+            ast.ExpressionStatement(
+                expr=ast.CallExpr(
+                    callee=ast.Identifier(name="print"),
+                    args=[
+                        ast.BinaryExpr(
+                            left=ast.Identifier(name="i"),
+                            op="+",
+                            right=ast.Identifier(name="x"),
+                        )
+                    ],
+                )
+            )
+        ],
+    )
+    program = ast.Program(statements=[nums_decl, for_stmt])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_for_in_index_variable_codegen_uses_hidden_counter():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+            name="nums",
+            initializer=ast.ArrayLiteral(elements=[ast.IntegerLiteral(value=10), ast.IntegerLiteral(value=20)]),
+        ),
+        ast.ForInStatement(
+            index_type=ast.TypeAnnotation(base_type="int"),
+            index_name="i",
+            var_type=ast.TypeAnnotation(base_type="int"),
+            var_name="n",
+            iterable=ast.Identifier(name="nums"),
+            body=[
+                ast.ExpressionStatement(
+                    expr=ast.CallExpr(
+                        callee=ast.Identifier(name="print"),
+                        args=[ast.BinaryExpr(left=ast.Identifier(name="i"), op="+", right=ast.Identifier(name="n"))],
+                    )
+                )
+            ],
+        ),
+    ])
+
+    code = gen.generate(program)
+
+    assert "int i = (int)_oda_tmp_" in code
+    assert "int n = nums[_oda_tmp_" in code
 
 def test_guard_emits_error_dispatch():
     gen = CCodeGenerator()

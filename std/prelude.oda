@@ -1,0 +1,3 @@
+extern func print(string value)
+extern func input() -> string
+extern func assert(bool condition)
