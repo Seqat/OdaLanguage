@@ -24,9 +24,12 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 | Ranges and loops | `for-in`, `while`, C-style `for`, `..`, `..=`, `step`, and `reversed`. |
 | Arrays | Dynamic-style literals, fixed-size annotations, multidimensional arrays, and `new` allocation. |
 | Classes | Private fields with `_`, `construct`, methods, and `destruct`. |
+| Enums | `enum Name { Variant }` declarations compile to standard C `typedef enum`. |
 | `ref` parameters | Explicit pass-by-reference at function boundaries. |
 | String interpolation | Interpolated expressions such as `"sum={a+b}"`. |
-| Pattern matching | `match (value) { pattern { ... } _ { ... } }` for integers and strings. |
+| Pattern matching | `match (value) { pattern { ... } _ { ... } }` for integers, strings, and enums. |
+| Explicit casts | Use `expr as type` or `(type)expr`; narrowing requires an explicit cast. |
+| Unsigned integers | `uint` values can be written with a `u` suffix, such as `5u`. |
 | File and console I/O | `readFile()` and `input()` builtins. |
 | Strict semantic checking | Semantic errors stop compilation before C generation. |
 
@@ -78,6 +81,21 @@ print("a+b= {a+b}")
 
 Interpolation braces accept full Oda expressions, not only variable names.
 
+### Numeric Types And Casts
+
+```oda
+uint workers = 5u
+float ratio = 3.75
+
+int rounded = ratio as int
+uint explicit_count = (uint)rounded
+
+print("workers={workers}")
+print("rounded={rounded}")
+```
+
+Oda keeps implicit numeric coercions conservative. Widening such as `int -> float` is allowed, but narrowing conversions such as `float -> int` or potentially unsafe conversions such as `int -> uint` must be written explicitly with a cast.
+
 ### Control Flow
 
 ```oda
@@ -93,6 +111,25 @@ for (int i in 0..=4 step 2) {
     print("i={i}")
 }
 ```
+
+### Enums And Pattern Matching
+
+```oda
+enum Mode { Idle, Busy, Done }
+
+func describe(Mode mode) {
+    match (mode) {
+        Mode.Idle { print("idle") }
+        Mode.Busy { print("busy") }
+        _ { print("done") }
+    }
+}
+
+Mode current = Mode.Busy
+describe(current)
+```
+
+Enum variants are referenced as `EnumName.Variant`. The C generator emits a standard enum with prefixed C variant names, for example `Mode_Busy`, to avoid global name collisions.
 
 ### Arrays
 

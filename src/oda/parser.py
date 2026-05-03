@@ -68,6 +68,8 @@ class Parser:
             return self._func_decl()
         if t.type == TokenType.CLASS:
             return self._class_decl()
+        if t.type == TokenType.ENUM:
+            return self._enum_decl()
         if t.type == TokenType.IF:
             return self._if_stmt()
         if t.type == TokenType.WHILE:
@@ -228,6 +230,26 @@ class Parser:
             self._skip_newlines()
         self._expect(TokenType.RBRACE)
         return cls
+
+    def _enum_decl(self) -> ast.EnumDeclaration:
+        t = self._advance()  # 'enum'
+        name = self._expect(TokenType.IDENTIFIER, "Expected enum name").value
+        self._skip_newlines()
+        self._expect(TokenType.LBRACE)
+        variants = []
+        self._skip_newlines()
+        while not self._at(TokenType.RBRACE, TokenType.EOF):
+            variants.append(self._expect(TokenType.IDENTIFIER, "Expected enum variant name").value)
+            if self._at(TokenType.COMMA):
+                self._advance()
+            elif self._at(TokenType.NEWLINE, TokenType.SEMICOLON):
+                self._consume_terminator()
+            elif not self._at(TokenType.RBRACE):
+                cur = self._cur()
+                raise ParserError("Expected ',' or newline after enum variant", cur.line, cur.column, self.filename)
+            self._skip_newlines()
+        self._expect(TokenType.RBRACE)
+        return ast.EnumDeclaration(line=t.line, column=t.column, name=name, variants=variants)
 
     def _construct_block(self) -> ast.FuncDeclaration:
         t = self._advance()  # 'construct'
@@ -549,7 +571,7 @@ class Parser:
         return self._assignment()
 
     def _assignment(self):
-        left = self._null_coalesce()
+        left = self._cast_expr()
         if self._at(TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN,
                     TokenType.STAR_ASSIGN, TokenType.SLASH_ASSIGN):
             op = self._advance().value
@@ -557,6 +579,14 @@ class Parser:
             return ast.AssignExpr(line=left.line, column=left.column,
                                   target=left, op=op, value=right)
         return left
+
+    def _cast_expr(self):
+        expr = self._null_coalesce()
+        while self._at(TokenType.AS):
+            t = self._advance()
+            target = self._type_annotation()
+            expr = ast.CastExpr(line=t.line, column=t.column, expr=expr, target_type=target)
+        return expr
 
     def _null_coalesce(self):
         left = self._logic_or()
@@ -628,7 +658,46 @@ class Parser:
         if self._at(TokenType.MINUS):
             t = self._advance()
             return ast.UnaryExpr(line=t.line, column=t.column, op="-", operand=self._unary())
+        if self._starts_c_style_cast():
+            t = self._advance()  # '('
+            target = self._type_annotation()
+            self._expect(TokenType.RPAREN)
+            return ast.CastExpr(line=t.line, column=t.column, expr=self._unary(), target_type=target)
         return self._postfix()
+
+    def _starts_c_style_cast(self) -> bool:
+        if not self._at(TokenType.LPAREN):
+            return False
+        if self._peek().type not in TYPE_TOKENS and self._peek().type != TokenType.IDENTIFIER:
+            return False
+        p = 2
+        if self._peek(p).type in (TokenType.QUESTION, TokenType.NOT):
+            p += 1
+        while self._peek(p).type == TokenType.LBRACKET:
+            p += 1
+            if self._peek(p).type == TokenType.INTEGER:
+                p += 1
+            if self._peek(p).type != TokenType.RBRACKET:
+                return False
+            p += 1
+        if self._peek(p).type != TokenType.RPAREN:
+            return False
+        next_type = self._peek(p + 1).type
+        return next_type in (
+            TokenType.INTEGER,
+            TokenType.FLOAT_LIT,
+            TokenType.STRING_LIT,
+            TokenType.CHAR_LIT,
+            TokenType.TRUE,
+            TokenType.FALSE,
+            TokenType.NULL,
+            TokenType.IDENTIFIER,
+            TokenType.LPAREN,
+            TokenType.LBRACKET,
+            TokenType.NEW,
+            TokenType.NOT,
+            TokenType.MINUS,
+        )
 
     def _postfix(self):
         node = self._primary()
@@ -671,6 +740,8 @@ class Parser:
 
         if t.type == TokenType.INTEGER:
             self._advance()
+            if t.value.endswith(("u", "U")):
+                return ast.UIntLiteral(line=t.line, column=t.column, value=int(t.value[:-1]))
             return ast.IntegerLiteral(line=t.line, column=t.column, value=int(t.value))
 
         if t.type == TokenType.FLOAT_LIT:

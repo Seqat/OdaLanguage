@@ -74,6 +74,13 @@ class ClassDeclaration:
     column: int = 0
 
 @dataclass
+class EnumDeclaration:
+    name: str = ""
+    variants: list[str] = field(default_factory=list)
+    line: int = 0
+    column: int = 0
+
+@dataclass
 class IfStatement:
     condition: Optional[object] = None
     body: list = field(default_factory=list)
@@ -195,6 +202,12 @@ class IntegerLiteral:
     column: int = 0
 
 @dataclass
+class UIntLiteral:
+    value: int = 0
+    line: int = 0
+    column: int = 0
+
+@dataclass
 class FloatLiteral:
     value: float = 0.0
     line: int = 0
@@ -247,6 +260,13 @@ class BinaryExpr:
 class UnaryExpr:
     op: str = ""
     operand: Optional[object] = None
+    line: int = 0
+    column: int = 0
+
+@dataclass
+class CastExpr:
+    expr: Optional[object] = None
+    target_type: Optional[TypeAnnotation] = None
     line: int = 0
     column: int = 0
 

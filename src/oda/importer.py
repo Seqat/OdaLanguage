@@ -36,6 +36,10 @@ class Importer:
                 mod_decls[stmt.name] = mangled
                 stmt.name = mangled
                 # For classes, we don't mangle methods here, codegen handles Class_method
+            elif isinstance(stmt, ast.EnumDeclaration):
+                mangled = f"{prefix}_{stmt.name}" if prefix else stmt.name
+                mod_decls[stmt.name] = mangled
+                stmt.name = mangled
             elif isinstance(stmt, ast.VarDeclaration):
                 mangled = f"{prefix}_{stmt.name}" if prefix else stmt.name
                 mod_decls[stmt.name] = mangled
@@ -152,4 +156,3 @@ class Importer:
                         continue
 
                 self._rewrite_nodes(v, mod_decls, alias_map, direct_imports)
-

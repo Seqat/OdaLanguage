@@ -54,6 +54,15 @@ class Box {
     assert cls.destructor.name == "destruct"
 
 
+def test_parses_enum_declaration():
+    program = parse("enum Mode { Idle, Busy, Done }")
+    enum = program.statements[0]
+
+    assert isinstance(enum, ast.EnumDeclaration)
+    assert enum.name == "Mode"
+    assert enum.variants == ["Idle", "Busy", "Done"]
+
+
 def test_parses_inclusive_range_loop_with_step():
     program = parse("for (int i in 0..=10 step 2) { print(i) }")
     stmt = program.statements[0]
@@ -118,6 +127,28 @@ def test_parses_interpolated_expression_parts():
     assert init.parts[1].op == "+"
     assert isinstance(init.parts[1].right, ast.Identifier)
     assert init.parts[1].right.name == "b"
+
+
+def test_parses_uint_literal_and_as_cast():
+    program = parse("uint value = 5u\nint narrowed = value as int")
+
+    first = program.statements[0]
+    second = program.statements[1]
+
+    assert isinstance(first.initializer, ast.UIntLiteral)
+    assert first.initializer.value == 5
+    assert isinstance(second.initializer, ast.CastExpr)
+    assert second.initializer.target_type.base_type == "int"
+    assert isinstance(second.initializer.expr, ast.Identifier)
+
+
+def test_parses_c_style_cast():
+    program = parse("uint value = (uint)5")
+    init = program.statements[0].initializer
+
+    assert isinstance(init, ast.CastExpr)
+    assert init.target_type.base_type == "uint"
+    assert isinstance(init.expr, ast.IntegerLiteral)
 
 
 def test_parses_match_with_wildcard_arm():

@@ -60,11 +60,19 @@ class FuncInfo:
         self.decl = decl
 
 
+class EnumInfo:
+    def __init__(self, name: str, decl: ast.EnumDeclaration):
+        self.name = name
+        self.decl = decl
+        self.variants: set[str] = set(decl.variants)
+
+
 class SemanticAnalyzer:
     def __init__(self, filename: str = "<source>"):
         self.filename = filename
         self.scope = Scope()
         self.classes: dict[str, ClassInfo] = {}
+        self.enums: dict[str, EnumInfo] = {}
         self.functions: dict[str, FuncInfo] = {}
         self.errors: list[SemanticError] = []
         self._class_context: list[str] = []
@@ -111,6 +119,8 @@ class SemanticAnalyzer:
                 self.classes[stmt.name] = ci
             elif isinstance(stmt, ast.FuncDeclaration):
                 self.functions[stmt.name] = FuncInfo(stmt.name, stmt)
+            elif isinstance(stmt, ast.EnumDeclaration):
+                self.enums[stmt.name] = EnumInfo(stmt.name, stmt)
 
         # Second pass: analyze statements
         for stmt in program.statements:
@@ -124,6 +134,8 @@ class SemanticAnalyzer:
             self._analyze_func(stmt)
         elif isinstance(stmt, ast.ClassDeclaration):
             self._analyze_class(stmt)
+        elif isinstance(stmt, ast.EnumDeclaration):
+            self._analyze_enum(stmt)
         elif isinstance(stmt, ast.IfStatement):
             self._analyze_if(stmt)
         elif isinstance(stmt, ast.WhileStatement):
@@ -213,9 +225,19 @@ class SemanticAnalyzer:
             self.scope.define(Symbol(stmt.var_name, stmt.var_type))
         elif isinstance(stmt, ast.MatchStatement):
             self._analyze_expr(stmt.expr)
+            match_type = self._infer_type(stmt.expr)
             for arm in stmt.arms:
                 if arm.pattern:
                     self._analyze_expr(arm.pattern)
+                    pattern_type = self._infer_type(arm.pattern)
+                    if (
+                        match_type
+                        and pattern_type
+                        and pattern_type != match_type
+                        and not self._can_coerce(pattern_type, match_type)
+                        and not self._can_coerce(match_type, pattern_type)
+                    ):
+                        self._err(f"Match pattern type '{pattern_type}' does not match '{match_type}'", arm)
                 self._analyze_block(arm.body)
         elif isinstance(stmt, ast.ExpressionStatement):
             if stmt.expr:
@@ -270,7 +292,7 @@ class SemanticAnalyzer:
         full = self._full_type(stmt.type_ann)
         base = stmt.type_ann.base_type
         # Verify the type exists
-        if base not in _WIDENING and base not in self.classes:
+        if not self._type_exists(stmt.type_ann):
             self._err(f"Unknown type '{base}'", stmt)
 
         # Null safety: non-nullable vars must have an initializer or will be set
@@ -321,6 +343,13 @@ class SemanticAnalyzer:
         finally:
             self.scope = old_scope
             self._class_context.pop()
+
+    def _analyze_enum(self, stmt: ast.EnumDeclaration):
+        seen = set()
+        for variant in stmt.variants:
+            if variant in seen:
+                self._err(f"Duplicate enum variant '{variant}' in enum '{stmt.name}'", stmt)
+            seen.add(variant)
 
     def _analyze_if(self, stmt: ast.IfStatement):
         self._analyze_expr(stmt.condition)
@@ -442,7 +471,7 @@ class SemanticAnalyzer:
     def _analyze_expr(self, expr):
         if isinstance(expr, ast.Identifier):
             sym = self.scope.lookup(expr.name)
-            if sym is None and expr.name not in self.classes and expr.name not in self.functions:
+            if sym is None and expr.name not in self.classes and expr.name not in self.enums and expr.name not in self.functions:
                 # Allow underscore-prefixed within class context
                 if self._current_class and expr.name.startswith("_"):
                     ci = self.classes.get(self._current_class)
@@ -470,6 +499,9 @@ class SemanticAnalyzer:
                 self._err(f"Invalid operands for '{expr.op}': '{left_type}' and '{right_type}'", expr)
         elif isinstance(expr, ast.UnaryExpr):
             self._analyze_expr(expr.operand)
+        elif isinstance(expr, ast.CastExpr):
+            self._analyze_expr(expr.expr)
+            self._analyze_cast(expr)
         elif isinstance(expr, ast.CallExpr):
             self._analyze_expr(expr.callee)
             self._check_call(expr)
@@ -478,6 +510,11 @@ class SemanticAnalyzer:
                 if self._infer_type(a) == "void":
                     self._err("Cannot use a void function call as an argument", a)
         elif isinstance(expr, ast.MemberAccess):
+            if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
+                enum_info = self.enums[expr.obj.name]
+                if expr.member not in enum_info.variants:
+                    self._err(f"Enum '{expr.obj.name}' has no variant '{expr.member}'", expr)
+                return
             self._analyze_expr(expr.obj)
             if expr.member.startswith("_"):
                 owner_class = self._infer_type(expr.obj)
@@ -504,10 +541,43 @@ class SemanticAnalyzer:
                 if sz_type not in ("int", "uint") and sz_type is not None:
                     self._err("Array dimensions must be integer expressions", expr)
 
+    def _analyze_cast(self, expr: ast.CastExpr):
+        target = expr.target_type
+        if not target or not self._type_exists(target):
+            name = self._full_type(target) if target else "<unknown>"
+            self._err(f"Unknown cast target type '{name}'", expr)
+            return
+        source = self._infer_type(expr.expr)
+        dest = self._full_type(target)
+        if source is None:
+            return
+        if target.is_array or target.is_nullable:
+            self._err(f"Cannot cast to non-scalar type '{dest}'", expr)
+            return
+        if not self._can_explicit_cast(source, dest):
+            self._err(f"Cannot cast '{source}' to '{dest}'", expr)
+
+    def _type_exists(self, ta: ast.TypeAnnotation) -> bool:
+        return ta.base_type in _WIDENING or ta.base_type in self.classes or ta.base_type in self.enums
+
+    def _can_explicit_cast(self, src: str, dst: str) -> bool:
+        if src == dst:
+            return True
+        scalar = {"int", "uint", "float", "char", "bool"}
+        if src in scalar and dst in scalar:
+            return True
+        if src in self.enums and dst in ("int", "uint"):
+            return True
+        if src in ("int", "uint") and dst in self.enums:
+            return True
+        return False
+
     # ── type inference (basic) ───────────────────────────────
     def _infer_type(self, expr) -> str | None:
         if isinstance(expr, ast.IntegerLiteral):
             return "int"
+        if isinstance(expr, ast.UIntLiteral):
+            return "uint"
         if isinstance(expr, ast.FloatLiteral):
             return "float"
         if isinstance(expr, (ast.StringLiteral, ast.InterpolatedString)):
@@ -526,6 +596,11 @@ class SemanticAnalyzer:
             sym = self.scope.lookup(expr.name)
             return self._full_type(sym.type_ann) if sym else None
         if isinstance(expr, ast.MemberAccess):
+            if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
+                enum_info = self.enums[expr.obj.name]
+                if expr.member in enum_info.variants:
+                    return expr.obj.name
+                return None
             obj_type = self._infer_type(expr.obj)
             ci = self.classes.get(obj_type) if obj_type else None
             if ci and expr.member in ci.field_types:
@@ -547,6 +622,8 @@ class SemanticAnalyzer:
             if expr.op == "-" and operand_type in ("int", "uint", "float"):
                 return operand_type
             return None
+        if isinstance(expr, ast.CastExpr):
+            return self._full_type(expr.target_type)
         if isinstance(expr, ast.BinaryExpr):
             return self._infer_binary_type(expr)
         if isinstance(expr, ast.CallExpr):

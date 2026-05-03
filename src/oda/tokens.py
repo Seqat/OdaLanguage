@@ -27,6 +27,7 @@ class TokenType(Enum):
     # ── Declaration keywords ─────────────────────────────────
     FUNC        = auto()
     CLASS       = auto()
+    ENUM        = auto()
     CONSTRUCT   = auto()
     DESTRUCT    = auto()
 
@@ -123,6 +124,7 @@ KEYWORDS: dict[str, TokenType] = {
     "ref":       TokenType.REF,
     "func":      TokenType.FUNC,
     "class":     TokenType.CLASS,
+    "enum":      TokenType.ENUM,
     "construct": TokenType.CONSTRUCT,
     "destruct":  TokenType.DESTRUCT,
     "if":        TokenType.IF,

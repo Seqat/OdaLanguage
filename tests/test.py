@@ -129,6 +129,64 @@ def test_match_integer_uses_equality():
     assert "strcmp" not in code
     assert "==" in code
 
+def test_enum_emits_standard_c_typedef_enum():
+    gen = CCodeGenerator()
+    program = ast.Program(statements=[
+        ast.EnumDeclaration(name="Mode", variants=["Idle", "Busy"]),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="Mode"),
+            name="mode",
+            initializer=ast.MemberAccess(obj=ast.Identifier(name="Mode"), member="Busy"),
+        ),
+    ])
+
+    code = gen.generate(program)
+
+    assert "typedef enum {" in code
+    assert "Mode_Idle," in code
+    assert "Mode_Busy" in code
+    assert "} Mode;" in code
+    assert "Mode mode = Mode_Busy;" in code
+
+def test_enum_unknown_variant_is_semantic_error():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.EnumDeclaration(name="Mode", variants=["Idle"]),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="Mode"),
+            name="mode",
+            initializer=ast.MemberAccess(obj=ast.Identifier(name="Mode"), member="Busy"),
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Enum 'Mode' has no variant 'Busy'" in e.message for e in analyzer.errors)
+
+def test_match_pattern_type_must_match_scrutinee():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.EnumDeclaration(name="Mode", variants=["Idle"]),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="Mode"),
+            name="mode",
+            initializer=ast.MemberAccess(obj=ast.Identifier(name="Mode"), member="Idle"),
+        ),
+        ast.MatchStatement(
+            expr=ast.Identifier(name="mode"),
+            arms=[
+                ast.MatchArm(
+                    pattern=ast.IntegerLiteral(value=1),
+                    body=[ast.ReturnStatement()],
+                )
+            ],
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Match pattern type 'int' does not match 'Mode'" in e.message for e in analyzer.errors)
+
 def test_for_in_unknown_collection_raises():
     analyzer = SemanticAnalyzer()
     stmt = ast.ForInStatement(
@@ -839,6 +897,62 @@ def test_int_to_uint_is_not_allowed():
     analyzer.analyze(program)
 
     assert any("Cannot coerce 'int' to 'uint'" in e.message for e in analyzer.errors)
+
+def test_uint_literal_initializes_uint():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="uint"),
+            name="u",
+            initializer=ast.UIntLiteral(value=1),
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_explicit_cast_allows_int_to_uint_and_float_to_int():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="uint"),
+            name="u",
+            initializer=ast.CastExpr(
+                expr=ast.IntegerLiteral(value=1),
+                target_type=ast.TypeAnnotation(base_type="uint"),
+            ),
+        ),
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="i",
+            initializer=ast.CastExpr(
+                expr=ast.FloatLiteral(value=3.8),
+                target_type=ast.TypeAnnotation(base_type="int"),
+            ),
+        ),
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_invalid_explicit_cast_is_rejected():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int"),
+            name="bad",
+            initializer=ast.CastExpr(
+                expr=ast.StringLiteral(value="nope"),
+                target_type=ast.TypeAnnotation(base_type="int"),
+            ),
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot cast 'string' to 'int'" in e.message for e in analyzer.errors)
 
 def test_deep_binary_expression_type_inference_rejects_invalid_operands():
     analyzer = SemanticAnalyzer()

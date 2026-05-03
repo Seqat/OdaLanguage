@@ -216,6 +216,8 @@ class Lexer:
             else:
                 buf.append(self._advance())
         value = "".join(buf)
+        if not is_float and self._ch() in ("u", "U"):
+            value += self._advance()
         ttype = TokenType.FLOAT_LIT if is_float else TokenType.INTEGER
         self._add(ttype, value, line, col)
 

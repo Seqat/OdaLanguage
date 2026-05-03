@@ -34,7 +34,7 @@ def test_lexes_keywords_identifiers_and_literals():
 
 
 def test_lexes_range_and_nullish_operators():
-    tokens = tokens_without_eof("0..10 0..=5 alias ?? fallback")
+    tokens = tokens_without_eof("0..10 0..=5 alias ?? fallback 5u")
 
     assert [tok.type for tok in tokens] == [
         TokenType.INTEGER,
@@ -46,7 +46,9 @@ def test_lexes_range_and_nullish_operators():
         TokenType.IDENTIFIER,
         TokenType.NULLISH,
         TokenType.IDENTIFIER,
+        TokenType.INTEGER,
     ]
+    assert tokens[-1].value == "5u"
 
 
 def test_lexes_ref_when_arrow_and_compound_assignment():
@@ -64,6 +66,20 @@ def test_lexes_ref_when_arrow_and_compound_assignment():
         TokenType.IDENTIFIER,
         TokenType.NEQ,
         TokenType.INTEGER,
+    ]
+
+
+def test_lexes_enum_keyword():
+    tokens = tokens_without_eof("enum Mode { Idle, Busy }")
+
+    assert [tok.type for tok in tokens] == [
+        TokenType.ENUM,
+        TokenType.IDENTIFIER,
+        TokenType.LBRACE,
+        TokenType.IDENTIFIER,
+        TokenType.COMMA,
+        TokenType.IDENTIFIER,
+        TokenType.RBRACE,
     ]
 
 

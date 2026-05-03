@@ -155,6 +155,46 @@ touch(ref value)
 '''
     assert compile_and_run(src) == "7"
 
+def test_uint_literal_and_explicit_as_cast_compile_and_run():
+    src = '''
+uint positive = 5u
+int narrowed = 3.9 as int
+uint explicit_unsigned = -1 as uint
+print(positive)
+print(narrowed)
+print(explicit_unsigned > 0u)
+'''
+    c_code = _pipeline(src, "<test>")
+    assert "unsigned int positive = 5u;" in c_code
+    assert "int narrowed = ((int)(3.9));" in c_code
+    assert "unsigned int explicit_unsigned = ((unsigned int)((-1)));" in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "5\n3\n1"
+
+def test_c_style_explicit_cast_compile_and_run():
+    src = '''
+float f = 8.75
+int whole = (int)f
+uint count = (uint)whole
+print(count)
+'''
+    c_code = _pipeline(src, "<test>")
+    assert "int whole = ((int)(f));" in c_code
+    assert "unsigned int count = ((unsigned int)(whole));" in c_code
+    assert compile_and_run(src) == "8"
+
 def test_guard_success_continues_after_unwrap():
     src = '''
 func check() {
@@ -222,6 +262,44 @@ check()
         result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
 
     assert result.stdout.strip() == "missing"
+
+def test_enum_match_transpiles_compiles_and_runs_with_strict_warnings():
+    src = '''
+enum Mode { Idle, Busy, Done }
+
+func describe(Mode mode) {
+    match (mode) {
+        Mode.Idle { print("idle") }
+        Mode.Busy { print("busy") }
+        _ { print("done") }
+    }
+}
+
+Mode mode = Mode.Busy
+describe(mode)
+'''
+    c_code = _pipeline(src, "<test>")
+    assert "typedef enum {" in c_code
+    assert "Mode_Idle," in c_code
+    assert "Mode_Busy," in c_code
+    assert "Mode_Done" in c_code
+    assert "} Mode;" in c_code
+    assert "Mode mode = Mode_Busy;" in c_code
+    assert "if (mode == Mode_Idle)" in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = subprocess.run([str(bin_path)], capture_output=True, text=True, check=True)
+
+    assert result.stdout.strip() == "busy"
 
 def test_guard_case_must_exit_in_pipeline():
     src = '''

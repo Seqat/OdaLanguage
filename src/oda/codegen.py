@@ -28,6 +28,7 @@ class CCodeGenerator:
         self._main: list[str] = []       # top-level → main()
         self._helpers_emitted: set[str] = set()
         self._class_names: set[str] = set()
+        self._enum_variants: dict[str, set[str]] = {}
         self._destructors: list[tuple[str, str]] = []  # (class, varname)
         self._scope_starts: list[int] = []
         self._func_starts: list[int] = []
@@ -52,6 +53,8 @@ class CCodeGenerator:
                     self._func_params[f"{s.name}_construct"] = [ast.Parameter(type_ann=ast.TypeAnnotation(base_type=s.name), name="self", is_ref=True)] + s.constructor.params
                 for m in s.methods:
                     self._func_params[f"{s.name}_{m.name}"] = [ast.Parameter(type_ann=ast.TypeAnnotation(base_type=s.name), name="self", is_ref=True)] + m.params
+            elif isinstance(s, ast.EnumDeclaration):
+                self._enum_variants[s.name] = set(s.variants)
             elif isinstance(s, ast.FuncDeclaration):
                 self._func_params[s.name] = s.params
                 if s.return_type:
@@ -257,6 +260,8 @@ class CCodeGenerator:
     def _emit_toplevel(self, stmt):
         if isinstance(stmt, ast.ClassDeclaration):
             self._emit_class(stmt)
+        elif isinstance(stmt, ast.EnumDeclaration):
+            self._emit_enum(stmt)
         elif isinstance(stmt, ast.FuncDeclaration):
             self._emit_func_def(stmt)
         elif isinstance(stmt, ast.ImportStatement):
@@ -266,6 +271,14 @@ class CCodeGenerator:
             self._emit_stmt(stmt, self._main)
 
     # ── class → struct + functions ───────────────────────────
+    def _emit_enum(self, enum: ast.EnumDeclaration):
+        self._top.append("typedef enum {")
+        for i, variant in enumerate(enum.variants):
+            comma = "," if i < len(enum.variants) - 1 else ""
+            self._top.append(f"    {enum.name}_{variant}{comma}")
+        self._top.append(f"}} {enum.name};")
+        self._top.append("")
+
     def _emit_class(self, cls: ast.ClassDeclaration):
         self._top.append(f"typedef struct {{")
         for f in cls.fields:
@@ -430,6 +443,8 @@ class CCodeGenerator:
             out.append(f"free({var_name});")
 
     def _expr_allocates_heap(self, node) -> bool:
+        if isinstance(node, ast.CastExpr):
+            return self._expr_allocates_heap(node.expr)
         if isinstance(node, ast.ArrayAllocation):
             return True
         if isinstance(node, ast.InterpolatedString):
@@ -576,12 +591,16 @@ class CCodeGenerator:
 
     def _get_fmt(self, oda_type: str) -> str:
         """Return printf format specifier for an Oda type."""
+        if oda_type in self._enum_variants:
+            return "%d"
         return _FMT.get(oda_type, "%s")
 
     def _infer_expr_type(self, node) -> str:
         """Best-effort type inference for printf format selection."""
         if isinstance(node, ast.IntegerLiteral):
             return "int"
+        if isinstance(node, ast.UIntLiteral):
+            return "uint"
         if isinstance(node, ast.FloatLiteral):
             return "float"
         if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):
@@ -592,6 +611,10 @@ class CCodeGenerator:
             return "bool"
         if isinstance(node, ast.Identifier):
             return self._var_types.get(node.name, "string")
+        if isinstance(node, ast.MemberAccess):
+            if isinstance(node.obj, ast.Identifier) and node.obj.name in self._enum_variants:
+                return node.obj.name
+            return self._infer_expr_type(node.obj)
         if isinstance(node, ast.BinaryExpr):
             if node.op == "+" and self._looks_like_string(node):
                 return "string"
@@ -636,6 +659,8 @@ class CCodeGenerator:
             out.append(f'printf("{fmt}\\n", {arg_s});')
         elif isinstance(arg, ast.IntegerLiteral):
             out.append(f'printf("%d\\n", {arg.value});')
+        elif isinstance(arg, ast.UIntLiteral):
+            out.append(f'printf("%u\\n", {arg.value}u);')
         elif isinstance(arg, ast.FloatLiteral):
             out.append(f'printf("%f\\n", {arg.value});')
         else:
@@ -851,6 +876,8 @@ class CCodeGenerator:
     def _expr(self, node, class_ctx=None, *, owns_result: bool = False) -> str:
         if isinstance(node, ast.IntegerLiteral):
             return str(node.value)
+        if isinstance(node, ast.UIntLiteral):
+            return f"{node.value}u"
         if isinstance(node, ast.FloatLiteral):
             return str(node.value)
         if isinstance(node, ast.StringLiteral):
@@ -923,6 +950,9 @@ class CCodeGenerator:
             return f"({l} {node.op} {r})"
         if isinstance(node, ast.UnaryExpr):
             return f"({node.op}{self._expr(node.operand, class_ctx)})"
+        if isinstance(node, ast.CastExpr):
+            expr_s = self._expr(node.expr, class_ctx, owns_result=owns_result)
+            return f"(({self._c_type(node.target_type)})({expr_s}))"
         if isinstance(node, ast.AssignExpr):
             t = self._expr(node.target, class_ctx)
             v = self._expr(node.value, class_ctx)
@@ -933,6 +963,8 @@ class CCodeGenerator:
                 return self._materialize_heap_expr(node, expr_code, owns_result=owns_result)
             return expr_code
         if isinstance(node, ast.MemberAccess):
+            if isinstance(node.obj, ast.Identifier) and node.obj.name in self._enum_variants:
+                return f"{node.obj.name}_{node.member}"
             obj = self._expr(node.obj, class_ctx)
             if class_ctx and isinstance(node.obj, ast.Identifier) and node.obj.name == "self":
                 return f"self->{node.member}"
