@@ -416,6 +416,10 @@ class SemanticAnalyzer:
                 return False
             branches = [stmt.body] + [body for _, body in stmt.elif_branches] + [stmt.else_body]
             return all(self._block_always_returns(branch) for branch in branches)
+        if isinstance(stmt, ast.WhileStatement):
+            if isinstance(stmt.condition, ast.BoolLiteral) and stmt.condition.value is True:
+                return self._block_always_returns(stmt.body)
+            return False
         if isinstance(stmt, ast.MatchStatement):
             has_default = any(arm.pattern is None for arm in stmt.arms)
             return has_default and all(self._block_always_returns(arm.body) for arm in stmt.arms)
@@ -564,6 +568,9 @@ class SemanticAnalyzer:
         elif isinstance(expr, ast.IndexAccess):
             self._analyze_expr(expr.obj)
             self._analyze_expr(expr.index)
+            index_type = self._infer_type(expr.index)
+            if index_type not in ("int", "uint", None):
+                self._err("Array index must be an integer expression", expr.index)
         elif isinstance(expr, ast.InterpolatedString):
             for part in expr.parts:
                 if not isinstance(part, str):
