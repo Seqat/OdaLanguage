@@ -29,19 +29,23 @@ typedef struct {
 
 
 void Counter_construct(Counter* self, int start) {
+    (void)self;
     self->_value = start;
     printf("counter opened\n");
 }
 
 void Counter_inc(Counter* self) {
+    (void)self;
     self->_value += 1;
 }
 
 int Counter_get(Counter* self) {
+    (void)self;
     return self->_value;
 }
 
 void Counter_destruct(Counter* self) {
+    (void)self;
     if ((self->_value >= 0)) {
         printf("counter closed\n");
     }

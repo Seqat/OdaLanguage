@@ -10,6 +10,8 @@ class Importer:
         self.base_dir = Path(entry_file).parent.resolve()
         self.repo_root = Path(__file__).resolve().parents[2]
         self.visited = set()
+        self._visit_state: dict[Path, str] = {}
+        self._import_stack: list[tuple[Path, str]] = []
         self.combined_statements = []
         self.module_exports: dict[str, dict[str, str]] = {}
         self.c_headers: set[str] = set()
@@ -19,11 +21,18 @@ class Importer:
 
         tokens = Lexer(source, filename).tokenize()
         prog = Parser(tokens, filename).parse()
-        self.visited.add(Path(filename).resolve())
+        entry_path = Path(filename).resolve()
+        self.visited.add(entry_path)
+        self._visit_state[entry_path] = "visiting"
+        self._import_stack.append((entry_path, Path(filename).stem))
         
         # We start AST transformation
         # Since it's the entry module, it doesn't need its own prefix, it's global
-        self._process_program(prog, prefix="", current_file=filename)
+        try:
+            self._process_program(prog, prefix="", current_file=filename)
+        finally:
+            self._import_stack.pop()
+            self._visit_state[entry_path] = "done"
         
         final_prog = ast.Program(statements=self.combined_statements)
         final_prog.c_headers = set(self.c_headers)
@@ -33,11 +42,18 @@ class Importer:
         prelude = self.repo_root / "std" / "prelude.oda"
         if not prelude.exists() or prelude.resolve() in self.visited:
             return
-        self.visited.add(prelude.resolve())
+        prelude_path = prelude.resolve()
+        self.visited.add(prelude_path)
+        self._visit_state[prelude_path] = "visiting"
+        self._import_stack.append((prelude_path, "std_prelude"))
         src = prelude.read_text()
         tokens = Lexer(src, str(prelude)).tokenize()
         prog = Parser(tokens, str(prelude)).parse()
-        self._process_program(prog, prefix="", current_file=str(prelude))
+        try:
+            self._process_program(prog, prefix="", current_file=str(prelude))
+        finally:
+            self._import_stack.pop()
+            self._visit_state[prelude_path] = "done"
 
     def _resolve_module_file(self, module_path: str) -> Path:
         mod_path_str = module_path[:-4] if module_path.endswith(".oda") else module_path
@@ -76,6 +92,7 @@ class Importer:
         # 2. Process imports and build alias map
         alias_map = {} # alias -> exported member map
         direct_imports = {} # local_name -> mangled_name
+        direct_import_modules = {} # local_name -> module path
 
         new_stmts = []
         for stmt in prog.statements:
@@ -93,13 +110,28 @@ class Importer:
 
                 mod_prefix = "_".join(parts)
 
+                mod_resolved = mod_file.resolve()
+                if self._visit_state.get(mod_resolved) == "visiting":
+                    raise SemanticError(
+                        f"Circular import detected: {self._format_import_cycle(mod_resolved, mod_path_str)}",
+                        stmt.line,
+                        stmt.column,
+                        current_file,
+                    )
+
                 # Load the module if not visited
-                if mod_file.resolve() not in self.visited:
-                    self.visited.add(mod_file.resolve())
+                if self._visit_state.get(mod_resolved) != "done":
+                    self.visited.add(mod_resolved)
+                    self._visit_state[mod_resolved] = "visiting"
+                    self._import_stack.append((mod_resolved, mod_path_str))
                     src = mod_file.read_text()
                     tokens = Lexer(src, str(mod_file)).tokenize()
                     mod_prog = Parser(tokens, str(mod_file)).parse()
-                    self._process_program(mod_prog, prefix=mod_prefix, current_file=str(mod_file))
+                    try:
+                        self._process_program(mod_prog, prefix=mod_prefix, current_file=str(mod_file))
+                    finally:
+                        self._import_stack.pop()
+                        self._visit_state[mod_resolved] = "done"
 
                 header = self._std_header_for_prefix(mod_prefix)
                 if header:
@@ -110,7 +142,15 @@ class Importer:
                     for n in stmt.names:
                         if n.startswith('_'):
                             raise SemanticError(f"Cannot import private member '{n}'", stmt.line, stmt.column, current_file)
+                        if n in direct_imports:
+                            raise SemanticError(
+                                f"Name '{n}' already imported from module '{direct_import_modules[n]}'",
+                                stmt.line,
+                                stmt.column,
+                                current_file,
+                            )
                         direct_imports[n] = exports.get(n, f"{mod_prefix}_{n}")
+                        direct_import_modules[n] = mod_path_str
                 else: # import a.b as c or import a.b
                     alias = stmt.alias if stmt.alias else parts[-1]
                     alias_map[alias] = exports
@@ -123,6 +163,16 @@ class Importer:
         
         # Add to combined (Unity Build)
         self.combined_statements.extend(new_stmts)
+
+    def _format_import_cycle(self, repeated_path: Path, repeated_label: str) -> str:
+        start = 0
+        for i, (path, _) in enumerate(self._import_stack):
+            if path == repeated_path:
+                start = i
+                break
+        labels = [label for _, label in self._import_stack[start:]]
+        labels.append(repeated_label)
+        return " -> ".join(labels)
 
     def _rewrite_nodes(self, nodes, mod_decls, alias_map, direct_imports):
         if isinstance(nodes, list):

@@ -82,6 +82,41 @@ def test_std_module_functions_are_not_available_without_import():
     with pytest.raises(SystemExit):
         compile_and_run("float value = math.sin(0.0)\nprint(value)")
 
+def test_import_name_collision_raises(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "a.oda").write_text("func foo() -> int { return 1 }\n")
+        (root / "b.oda").write_text("func foo() -> int { return 2 }\n")
+        entry = root / "main.oda"
+        source = '''
+from a import foo
+from b import foo
+print(foo())
+'''
+        entry.write_text(source)
+
+        with pytest.raises(SystemExit):
+            _pipeline(source, str(entry))
+
+    err = capsys.readouterr().err
+    assert "Name 'foo' already imported from module 'a'" in err
+
+def test_circular_import_raises(capsys):
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        a = root / "a.oda"
+        b = root / "b.oda"
+        a.write_text("import b\nfunc fa() -> int { return 1 }\n")
+        b.write_text("import a\nfunc fb() -> int { return 2 }\n")
+
+        with pytest.raises(SystemExit):
+            _pipeline(a.read_text(), str(a))
+
+    err = capsys.readouterr().err
+    assert "Circular import detected:" in err
+    assert "a" in err
+    assert "b" in err
+
 def test_null_coalescing():
     src = 'string? x = null\nprint(x ?? "default")'
     assert compile_and_run(src) == "default"
@@ -121,6 +156,32 @@ class Box {
 Box b = Box()
 '''
     assert compile_and_run(src) == "open\nclose"
+
+def test_class_field_interpolation_uses_field_types():
+    src = '''
+class Person {
+    string _name
+    int _age
+
+    construct(string name, int age) {
+        _name = name
+        _age = age
+    }
+
+    func greet() {
+        print("Hello, my name is {_name} and I am {_age} years old.")
+    }
+
+    destruct() {
+    }
+}
+
+Person p = Person("Alice", 30)
+p.greet()
+'''
+    c_code = _pipeline(src, "<test>")
+    assert 'printf("Hello, my name is %s and I am %d years old.\\n", self->_name, self->_age);' in c_code
+    assert compile_and_run(src) == "Hello, my name is Alice and I am 30 years old."
 
 def test_private_member_rejected():
     # The pipeline should raise SystemExit if semantic errors occur
@@ -185,6 +246,43 @@ print(cube[1][0][1])
 print(cube[0][1][0])
 '''
     assert compile_and_run(src) == "6\n3"
+
+def test_multidim_array_heap_freed():
+    src = '''
+func demo() {
+    int[][] matrix = new int[2][3]
+    matrix[0][0] = 1
+    matrix[1][2] = 5
+    print(matrix[0][0] + matrix[1][2])
+}
+demo()
+'''
+    assert compile_and_run(src) == "6"
+
+def test_nested_array_literal_no_void_cast():
+    src = '''
+int[][] matrix
+matrix = [[1, 2], [3, 4]]
+print(matrix[1][0])
+'''
+    c_code = _pipeline(src, "<test>")
+
+    assert "(void*)" not in c_code
+    assert "(int*[]){" in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "3"
 
 def test_string_interpolation_with_string_identifier():
     src = '''

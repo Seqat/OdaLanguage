@@ -363,6 +363,50 @@ def test_guard_unknown_error_type_raises():
     analyzer.analyze(program)
     assert any("Unknown error type 'NetworkDown'" in e.message for e in analyzer.errors)
 
+def test_guard_break_outside_loop_raises():
+    analyzer = SemanticAnalyzer()
+    stmt = ast.GuardStatement(
+        var_type=ast.TypeAnnotation(base_type="string"),
+        var_name="content",
+        expr=ast.CallExpr(callee=ast.Identifier(name="readFile"), args=[ast.StringLiteral(value="config.txt")]),
+        cases=[ast.GuardCase(error_type="FileNotFound", body=[ast.BreakStatement()])]
+    )
+    program = ast.Program(statements=[stmt])
+
+    analyzer.analyze(program)
+
+    assert any("break/continue cannot be used outside a loop" in e.message for e in analyzer.errors)
+
+def test_guard_break_inside_loop_passes():
+    analyzer = SemanticAnalyzer()
+    guard = ast.GuardStatement(
+        var_type=ast.TypeAnnotation(base_type="string"),
+        var_name="content",
+        expr=ast.CallExpr(callee=ast.Identifier(name="readFile"), args=[ast.StringLiteral(value="config.txt")]),
+        cases=[ast.GuardCase(error_type="FileNotFound", body=[ast.BreakStatement()])]
+    )
+    program = ast.Program(statements=[
+        ast.WhileStatement(condition=ast.BoolLiteral(value=True), body=[guard])
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors
+
+def test_guard_return_always_valid():
+    analyzer = SemanticAnalyzer()
+    stmt = ast.GuardStatement(
+        var_type=ast.TypeAnnotation(base_type="string"),
+        var_name="content",
+        expr=ast.CallExpr(callee=ast.Identifier(name="readFile"), args=[ast.StringLiteral(value="config.txt")]),
+        cases=[ast.GuardCase(error_type="FileNotFound", body=[ast.ReturnStatement()])]
+    )
+    program = ast.Program(statements=[stmt])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors
+
 def test_guard_unwrapped_var_is_defined_after_block():
     gen = CCodeGenerator()
     stmt = ast.GuardStatement(
