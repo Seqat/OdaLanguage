@@ -60,7 +60,20 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 
 # Run the compiler test suite
 make test
+
+# Run the suite with AddressSanitizer enabled for generated C binaries
+make test-asan
 ```
+
+## Memory Safety Testing
+
+Generated C integration tests should be run under AddressSanitizer before changes that touch code generation, RAII cleanup, arrays, strings, or scope exits are merged.
+
+```bash
+make test-asan
+```
+
+This target runs `python -m pytest tests` with `ODA_TEST_CFLAGS="-fsanitize=address -g"`, so integration tests compile generated C with ASan instrumentation and fail if the generated binaries report memory errors. During local development, use `make test-asan` as the final check after `make test`, or run it directly when working on memory-owning language features.
 
 ## AI-Agent Tooling
 
