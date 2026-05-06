@@ -2,16 +2,7 @@
 from __future__ import annotations
 from . import ast_nodes as ast
 from .errors import SemanticError
-
-# Widening-only coercion table: source → allowed targets
-_WIDENING = {
-    "int":   {"float"},
-    "uint":  {"float"},
-    "float": set(),
-    "char":  {"string"},
-    "bool":  set(),
-    "string": set(),
-}
+from .type_engine import BUILTIN_TYPES, can_coerce, infer_binary_type, infer_type
 
 _STANDARD_ERROR_TYPES = {
     "FileNotFound",
@@ -525,6 +516,10 @@ class SemanticAnalyzer:
                 sym = self.scope.lookup(expr.target.name)
                 if sym and sym.is_immutable:
                     self._err(f"Cannot reassign immutable variable '{expr.target.name}' (declared with 'stay')", expr)
+            elif isinstance(expr.target, ast.IndexAccess) and isinstance(expr.target.obj, ast.Identifier):
+                sym = self.scope.lookup(expr.target.obj.name)
+                if sym and sym.is_immutable:
+                    self._err("Cannot modify element of immutable array", expr.target)
         elif isinstance(expr, ast.BinaryExpr):
             self._analyze_expr(expr.left)
             self._analyze_expr(expr.right)
@@ -599,7 +594,7 @@ class SemanticAnalyzer:
             self._err(f"Cannot cast '{source}' to '{dest}'", expr)
 
     def _type_exists(self, ta: ast.TypeAnnotation) -> bool:
-        return ta.base_type in _WIDENING or ta.base_type in self.classes or ta.base_type in self.enums
+        return ta.base_type in BUILTIN_TYPES or ta.base_type in self.classes or ta.base_type in self.enums
 
     def _can_explicit_cast(self, src: str, dst: str) -> bool:
         if src == dst:
@@ -615,134 +610,10 @@ class SemanticAnalyzer:
 
     # ── type inference (basic) ───────────────────────────────
     def _infer_type(self, expr) -> str | None:
-        if isinstance(expr, ast.IntegerLiteral):
-            return "int"
-        if isinstance(expr, ast.UIntLiteral):
-            return "uint"
-        if isinstance(expr, ast.FloatLiteral):
-            return "float"
-        if isinstance(expr, (ast.StringLiteral, ast.InterpolatedString)):
-            return "string"
-        if isinstance(expr, ast.BoolLiteral):
-            return "bool"
-        if isinstance(expr, ast.NullLiteral):
-            return None
-        if isinstance(expr, ast.ArrayLiteral):
-            if not expr.elements: return "any[]"
-            et = self._infer_type(expr.elements[0])
-            return f"{et}[]" if et else "any[]"
-        if isinstance(expr, ast.ArrayAllocation):
-            return expr.base_type + ("[]" * len(expr.sizes))
-        if isinstance(expr, ast.Identifier):
-            sym = self.scope.lookup(expr.name)
-            return self._full_type(sym.type_ann) if sym else None
-        if isinstance(expr, ast.MemberAccess):
-            if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
-                enum_info = self.enums[expr.obj.name]
-                if expr.member in enum_info.variants:
-                    return expr.obj.name
-                return None
-            obj_type = self._infer_type(expr.obj)
-            ci = self.classes.get(obj_type) if obj_type else None
-            if ci and expr.member in ci.field_types:
-                return self._full_type(ci.field_types[expr.member])
-            return None
-        if isinstance(expr, ast.IndexAccess):
-            obj_type = self._infer_type(expr.obj)
-            if not obj_type:
-                return None
-            if obj_type.endswith("[]"):
-                return obj_type[:-2]
-            if obj_type == "string":
-                return "char"
-            return None
-        if isinstance(expr, ast.UnaryExpr):
-            operand_type = self._infer_type(expr.operand)
-            if expr.op == "!" and operand_type == "bool":
-                return "bool"
-            if expr.op == "-" and operand_type in ("int", "uint", "float"):
-                return operand_type
-            return None
-        if isinstance(expr, ast.CastExpr):
-            return self._full_type(expr.target_type)
-        if isinstance(expr, ast.BinaryExpr):
-            return self._infer_binary_type(expr)
-        if isinstance(expr, ast.CallExpr):
-            if isinstance(expr.callee, ast.Identifier):
-                if expr.callee.name in self.classes:
-                    return expr.callee.name
-                func_info = self.functions.get(expr.callee.name)
-                if func_info:
-                    if func_info.decl.return_type:
-                        return self._full_type(func_info.decl.return_type)
-                    return "void"
-            elif isinstance(expr.callee, ast.MemberAccess):
-                obj_type = self._infer_type(expr.callee.obj)
-                if obj_type and obj_type in self.classes:
-                    ci = self.classes[obj_type]
-                    for m in ci.decl.methods:
-                        if m.name == expr.callee.member:
-                            if m.return_type:
-                                return self._full_type(m.return_type)
-                            return "void"
-            return None
-
-        return None
+        return infer_type(expr, self.scope, self.classes, self.enums, self.functions)
 
     def _infer_binary_type(self, expr: ast.BinaryExpr) -> str | None:
-        left = self._infer_type(expr.left)
-        right = self._infer_type(expr.right)
-
-        if expr.op == "??":
-            return left or right
-
-        if expr.op in ("&&", "||"):
-            return "bool" if left == "bool" and right == "bool" else None
-
-        if expr.op in ("==", "!="):
-            if left == right or self._can_coerce(left, right) or self._can_coerce(right, left):
-                return "bool"
-            return None
-
-        if expr.op in ("<", ">", "<=", ">="):
-            if self._common_numeric_type(left, right) or (left == "char" and right == "char"):
-                return "bool"
-            return None
-
-        if expr.op == "+" and (left == "string" or right == "string"):
-            if left in ("string", "int", "uint", "float", "bool", "char") and right in ("string", "int", "uint", "float", "bool", "char"):
-                return "string"
-            return None
-
-        if expr.op in ("+", "-", "*", "/", "%"):
-            common = self._common_numeric_type(left, right)
-            if expr.op == "%" and common == "float":
-                return None
-            return common
-
-        return None
-
-    def _common_numeric_type(self, left: str | None, right: str | None) -> str | None:
-        numeric = ("char", "int", "uint", "float")
-        if left not in numeric or right not in numeric:
-            return None
-        if left == right:
-            return left
-        if left == "char":
-            left = "int"
-        if right == "char":
-            right = "int"
-        if left == right:
-            return left
-        if left == "float" and self._can_coerce(right, "float"):
-            return "float"
-        if right == "float" and self._can_coerce(left, "float"):
-            return "float"
-        return None
+        return infer_binary_type(expr, self.scope, self.classes, self.enums, self.functions)
 
     def _can_coerce(self, src: str, dst: str) -> bool:
-        if src is None or dst is None:
-            return False
-        if src == dst:
-            return True
-        return dst in _WIDENING.get(src, set())
+        return can_coerce(src, dst)

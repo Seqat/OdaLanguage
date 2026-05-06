@@ -750,6 +750,63 @@ def test_array_index_variable_int_passes():
 
     assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
 
+def _array_var_decl(*, is_immutable=False):
+    return ast.VarDeclaration(
+        type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+        name="nums",
+        is_immutable=is_immutable,
+        initializer=ast.ArrayLiteral(elements=[
+            ast.IntegerLiteral(value=1),
+            ast.IntegerLiteral(value=2),
+            ast.IntegerLiteral(value=3),
+        ]),
+    )
+
+def test_stay_array_element_assignment_raises():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        _array_var_decl(is_immutable=True),
+        ast.ExpressionStatement(expr=ast.AssignExpr(
+            target=ast.IndexAccess(obj=ast.Identifier(name="nums"), index=ast.IntegerLiteral(value=0)),
+            value=ast.IntegerLiteral(value=99),
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot modify element of immutable array" in e.message for e in analyzer.errors)
+
+def test_stay_array_reassignment_raises():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        _array_var_decl(is_immutable=True),
+        ast.ExpressionStatement(expr=ast.AssignExpr(
+            target=ast.Identifier(name="nums"),
+            value=ast.ArrayLiteral(elements=[
+                ast.IntegerLiteral(value=4),
+                ast.IntegerLiteral(value=5),
+            ]),
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert any("Cannot reassign immutable variable 'nums'" in e.message for e in analyzer.errors)
+
+def test_regular_array_element_assignment_passes():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        _array_var_decl(),
+        ast.ExpressionStatement(expr=ast.AssignExpr(
+            target=ast.IndexAccess(obj=ast.Identifier(name="nums"), index=ast.IntegerLiteral(value=0)),
+            value=ast.IntegerLiteral(value=99),
+        )),
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
 def test_same_class_can_access_private_member_on_same_class_instance():
     analyzer = SemanticAnalyzer()
     program = ast.Program(statements=[
