@@ -77,6 +77,7 @@ class SemanticAnalyzer:
         self.errors: list[SemanticError] = []
         self._class_context: list[str] = []
         self._current_return_type: ast.TypeAnnotation | None = None
+        self._loop_depth = 0
         # Register built-in functions. print is handled as a variadic-ish special case.
         self.functions["print"] = FuncInfo("print", ast.FuncDeclaration(name="print", return_type=None))
         self.functions["input"] = FuncInfo(
@@ -148,9 +149,14 @@ class SemanticAnalyzer:
             self._analyze_if(stmt)
         elif isinstance(stmt, ast.WhileStatement):
             self._analyze_expr(stmt.condition)
-            self._analyze_block(stmt.body)
+            self._loop_depth += 1
+            try:
+                self._analyze_block(stmt.body)
+            finally:
+                self._loop_depth -= 1
         elif isinstance(stmt, ast.ForStatement):
             self._push_scope("for")
+            self._loop_depth += 1
             try:
                 if stmt.init:
                     self._analyze_stmt(stmt.init)
@@ -160,15 +166,18 @@ class SemanticAnalyzer:
                     self._analyze_expr(stmt.update)
                 self._analyze_block(stmt.body)
             finally:
+                self._loop_depth -= 1
                 self._pop_scope()
         elif isinstance(stmt, ast.ForRangeStatement):
             self._analyze_expr(stmt.start)
             self._analyze_expr(stmt.end)
             self._push_scope("for-range")
+            self._loop_depth += 1
             try:
                 self.scope.define(Symbol(stmt.var_name, stmt.var_type))
                 self._analyze_block(stmt.body)
             finally:
+                self._loop_depth -= 1
                 self._pop_scope()
         elif isinstance(stmt, ast.ForInStatement):
             self._analyze_expr(stmt.iterable)
@@ -193,12 +202,14 @@ class SemanticAnalyzer:
                 self._err(f"Cannot iterate over unknown-size collection", stmt)
 
             self._push_scope("for-in")
+            self._loop_depth += 1
             try:
                 if stmt.index_name:
                     self.scope.define(Symbol(stmt.index_name, stmt.index_type))
                 self.scope.define(Symbol(stmt.var_name, stmt.var_type))
                 self._analyze_block(stmt.body)
             finally:
+                self._loop_depth -= 1
                 self._pop_scope()
         elif isinstance(stmt, ast.ReturnStatement):
             if self._current_return_type:
@@ -216,6 +227,9 @@ class SemanticAnalyzer:
                 self._analyze_expr(stmt.value)
                 if self._infer_type(stmt.value) == "void":
                     self._err("Cannot return a void value", stmt)
+        elif isinstance(stmt, (ast.BreakStatement, ast.ContinueStatement)):
+            if self._loop_depth == 0:
+                self._err("break/continue cannot be used outside a loop", stmt)
         elif isinstance(stmt, ast.GuardStatement):
             self._analyze_expr(stmt.expr)
             # Enforce that every case in guard MUST exit the scope
