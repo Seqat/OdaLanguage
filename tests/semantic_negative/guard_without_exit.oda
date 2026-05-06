@@ -1,0 +1,11 @@
+# EXPECT_ERROR: guard else block must exit
+func load() {
+    guard string content = readFile("missing.txt") else {
+        when (FileNotFound) {
+            print("missing")
+        }
+    }
+    print(content)
+}
+
+load()

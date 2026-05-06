@@ -1,0 +1,7 @@
+# EXPECT_ERROR: Cannot pass
+func double(int value) -> int {
+    return value * 2
+}
+
+int total = double("oops")
+print(total)

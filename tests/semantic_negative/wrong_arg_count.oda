@@ -1,0 +1,7 @@
+# EXPECT_ERROR: expects 2 argument
+func add(int left, int right) -> int {
+    return left + right
+}
+
+int total = add(1)
+print(total)

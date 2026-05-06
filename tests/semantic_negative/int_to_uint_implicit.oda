@@ -1,0 +1,4 @@
+# EXPECT_ERROR: Cannot coerce
+int signed_count = 3
+uint unsigned_count = signed_count
+print(unsigned_count)

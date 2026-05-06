@@ -1,0 +1,8 @@
+# EXPECT_ERROR: must be passed with 'ref'
+func bump(ref int value) {
+    value += 1
+}
+
+int count = 1
+bump(count)
+print(count)

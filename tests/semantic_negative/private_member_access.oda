@@ -1,0 +1,11 @@
+# EXPECT_ERROR: private member
+class Box {
+    int _secret
+
+    construct(int value) {
+        _secret = value
+    }
+}
+
+Box box = Box(7)
+print(box._secret)

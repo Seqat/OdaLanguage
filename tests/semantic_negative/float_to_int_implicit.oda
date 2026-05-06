@@ -1,0 +1,4 @@
+# EXPECT_ERROR: Cannot coerce
+float ratio = 3.5
+int rounded = ratio
+print(rounded)

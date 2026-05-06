@@ -1,0 +1,8 @@
+# EXPECT_ERROR: Not all code paths return
+func maybe(bool choose) -> int {
+    if (choose) {
+        return 1
+    }
+}
+
+print(maybe(true))

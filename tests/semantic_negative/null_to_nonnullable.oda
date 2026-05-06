@@ -1,0 +1,3 @@
+# EXPECT_ERROR: non-nullable
+string name = null
+print(name)
