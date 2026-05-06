@@ -697,6 +697,59 @@ def test_loop_variable_does_not_leak_to_outer_scope():
 
     assert any("Undefined variable 'i'" in e.message for e in analyzer.errors)
 
+def _program_with_array_index(index_expr, extra_statements=None):
+    return ast.Program(statements=[
+        ast.VarDeclaration(
+            type_ann=ast.TypeAnnotation(base_type="int", is_array=True, array_depth=1),
+            name="nums",
+            initializer=ast.ArrayLiteral(elements=[
+                ast.IntegerLiteral(value=1),
+                ast.IntegerLiteral(value=2),
+            ]),
+        ),
+        *(extra_statements or []),
+        ast.ExpressionStatement(expr=ast.IndexAccess(obj=ast.Identifier(name="nums"), index=index_expr)),
+    ])
+
+def test_array_index_float_raises():
+    analyzer = SemanticAnalyzer()
+    analyzer.analyze(_program_with_array_index(ast.FloatLiteral(value=1.5)))
+
+    assert any("Array index must be an integer expression" in e.message for e in analyzer.errors)
+
+def test_array_index_string_raises():
+    analyzer = SemanticAnalyzer()
+    analyzer.analyze(_program_with_array_index(ast.StringLiteral(value="a")))
+
+    assert any("Array index must be an integer expression" in e.message for e in analyzer.errors)
+
+def test_array_index_int_passes():
+    analyzer = SemanticAnalyzer()
+    analyzer.analyze(_program_with_array_index(ast.IntegerLiteral(value=0)))
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_array_index_uint_passes():
+    analyzer = SemanticAnalyzer()
+    analyzer.analyze(_program_with_array_index(ast.UIntLiteral(value=0)))
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_array_index_variable_int_passes():
+    analyzer = SemanticAnalyzer()
+    analyzer.analyze(_program_with_array_index(
+        ast.Identifier(name="i"),
+        extra_statements=[
+            ast.VarDeclaration(
+                type_ann=ast.TypeAnnotation(base_type="int"),
+                name="i",
+                initializer=ast.IntegerLiteral(value=0),
+            ),
+        ],
+    ))
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
 def test_same_class_can_access_private_member_on_same_class_instance():
     analyzer = SemanticAnalyzer()
     program = ast.Program(statements=[
@@ -1016,6 +1069,76 @@ def test_returning_function_must_return_on_all_paths():
     analyzer.analyze(program)
 
     assert any("Not all code paths return a value" in e.message for e in analyzer.errors)
+
+def test_while_true_with_return_passes():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="loop_return",
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[
+                ast.WhileStatement(
+                    condition=ast.BoolLiteral(value=True),
+                    body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=1))],
+                )
+            ],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_if_else_all_return_passes():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.FuncDeclaration(
+            name="choose",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="bool"), name="flag")],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[
+                ast.IfStatement(
+                    condition=ast.Identifier(name="flag"),
+                    body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=1))],
+                    else_body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=0))],
+                )
+            ],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
+
+def test_match_with_default_all_return_passes():
+    analyzer = SemanticAnalyzer()
+    program = ast.Program(statements=[
+        ast.EnumDeclaration(name="Mode", variants=["Idle", "Busy"]),
+        ast.FuncDeclaration(
+            name="code",
+            params=[ast.Parameter(type_ann=ast.TypeAnnotation(base_type="Mode"), name="mode")],
+            return_type=ast.TypeAnnotation(base_type="int"),
+            body=[
+                ast.MatchStatement(
+                    expr=ast.Identifier(name="mode"),
+                    arms=[
+                        ast.MatchArm(
+                            pattern=ast.MemberAccess(obj=ast.Identifier(name="Mode"), member="Idle"),
+                            body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=0))],
+                        ),
+                        ast.MatchArm(
+                            pattern=None,
+                            body=[ast.ReturnStatement(value=ast.IntegerLiteral(value=1))],
+                        ),
+                    ],
+                )
+            ],
+        )
+    ])
+
+    analyzer.analyze(program)
+
+    assert not analyzer.errors, f"Errors: {[e.message for e in analyzer.errors]}"
 
 def test_return_type_is_checked():
     analyzer = SemanticAnalyzer()

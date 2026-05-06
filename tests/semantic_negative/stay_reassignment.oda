@@ -1,0 +1,4 @@
+# EXPECT_ERROR: immutable variable
+stay int limit = 10
+limit = 11
+print(limit)
