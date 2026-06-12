@@ -1,6 +1,7 @@
 import json
 import pytest
 import subprocess
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -673,3 +674,39 @@ def test_cli_export_ast_json_errors_on_parse_failure():
     payload = json.loads(result.stderr)
     assert len(payload) == 1
     assert payload[0]["error_type"] == "ParserError"
+
+def test_cli_json_output_for_gcc_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "bad_c.oda"
+        src_path.write_text("int x = 1\n")
+        
+        fake_gcc = Path(tmp) / "fake_gcc.sh"
+        fake_gcc.write_text("#!/bin/sh\necho 'fake gcc error on line 1' >&2\necho 'some detail' >&2\nexit 1\n")
+        fake_gcc.chmod(0o755)
+
+        env = os.environ.copy()
+        env["CC"] = str(fake_gcc)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "oda"),
+                "build",
+                str(src_path),
+                "--output-format=json",
+            ],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    
+    assert result.returncode == 1
+    payload = json.loads(result.stderr)
+    assert payload["code"] == "E5001"
+    assert payload["phase"] == "codegen-cc"
+    assert "detail" in payload
+    assert "error_type" in payload
+    assert payload["error_type"] == "CodegenError"
+    # assert raw gcc text is not printed outside of the json payload
+    assert "gcc:" not in result.stderr.replace(json.dumps(payload, indent=2), "").replace(json.dumps(payload), "")

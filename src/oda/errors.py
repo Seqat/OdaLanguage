@@ -46,6 +46,7 @@ ERROR_CODES = {
     "E4006": "File I/O error",
     "E4007": "Source encoding error",
     "E5000": "Internal compiler error",
+    "E5001": "C compiler rejected generated output",
 }
 
 

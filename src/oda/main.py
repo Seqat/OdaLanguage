@@ -137,8 +137,19 @@ def cmd_build(args):
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print("  ✗ GCC errors:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
+        if getattr(args, "output_format", "text") == "json":
+            err_msg = result.stderr.strip().split("\n")[0] if result.stderr.strip() else "C compiler rejected generated output"
+            obj = {
+                "code": "E5001",
+                "error_type": "CodegenError",
+                "phase": "codegen-cc",
+                "message": err_msg,
+                "detail": result.stderr
+            }
+            print(json.dumps(obj, indent=2), file=sys.stderr)
+        else:
+            print("  ✗ GCC errors:", file=sys.stderr)
+            print(result.stderr, file=sys.stderr)
         sys.exit(1)
     print(f"  ✓ Built → {bin_path}")
 
@@ -159,8 +170,19 @@ def cmd_run(args):
         capture_output=True, text=True,
     )
     if result.returncode != 0:
-        print("  ✗ GCC errors:", file=sys.stderr)
-        print(result.stderr, file=sys.stderr)
+        if getattr(args, "output_format", "text") == "json":
+            err_msg = result.stderr.strip().split("\n")[0] if result.stderr.strip() else "C compiler rejected generated output"
+            obj = {
+                "code": "E5001",
+                "error_type": "CodegenError",
+                "phase": "codegen-cc",
+                "message": err_msg,
+                "detail": result.stderr
+            }
+            print(json.dumps(obj, indent=2), file=sys.stderr)
+        else:
+            print("  ✗ GCC errors:", file=sys.stderr)
+            print(result.stderr, file=sys.stderr)
         sys.exit(1)
     print(f"  ✓ Running {bin_path} …\n")
     subprocess.run([str(bin_path)])
