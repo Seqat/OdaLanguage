@@ -185,7 +185,8 @@ def cmd_run(args):
             print(result.stderr, file=sys.stderr)
         sys.exit(1)
     print(f"  ✓ Running {bin_path} …\n")
-    subprocess.run([str(bin_path)])
+    result_run = subprocess.run([str(bin_path)])
+    sys.exit(result_run.returncode)
 
 
 def cmd_export_ast(args):

@@ -66,3 +66,18 @@ def test_json_error_format_and_hints(capsys):
     hint = errors[0].get("hint") or ""
     assert "return" in hint or "break" in hint or "continue" in hint
 
+def test_all_raised_codes_in_registry():
+    import re
+    from src.oda.errors import ERROR_CODES
+    
+    raised_codes = set()
+    src_dir = Path(__file__).parent.parent / "src" / "oda"
+    for filename in ("semantic.py", "parser.py"):
+        content = (src_dir / filename).read_text(encoding="utf-8")
+        for m in re.finditer(r"code\s*=\s*[\"'](E\d{4})[\"']", content):
+            raised_codes.add(m.group(1))
+            
+    for code in raised_codes:
+        assert code in ERROR_CODES, f"Code '{code}' raised in parser.py or semantic.py is not registered in ERROR_CODES"
+
+

@@ -710,3 +710,17 @@ def test_cli_json_output_for_gcc_failure():
     assert payload["error_type"] == "CodegenError"
     # assert raw gcc text is not printed outside of the json payload
     assert "gcc:" not in result.stderr.replace(json.dumps(payload, indent=2), "").replace(json.dumps(payload), "")
+
+def test_cli_run_propagates_exit_code():
+    with tempfile.TemporaryDirectory() as tmp:
+        src_path = Path(tmp) / "exit_code.oda"
+        src_path.write_text("extern func exit(int status)\nexit(42)\n")
+        
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "oda"), "run", str(src_path), "-o", tmp],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 42
+

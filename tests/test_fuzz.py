@@ -9,6 +9,8 @@ Subprocess calls are fanned out across a thread pool to stay under the
 30-second budget (the calls are I/O-bound on the child process).
 """
 
+import contextlib
+import io
 import json
 import random
 import subprocess
@@ -18,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from oda.tokens import TokenType, KEYWORDS  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.oda.tokens import TokenType, KEYWORDS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 ODA = ROOT / "oda"
@@ -108,7 +110,7 @@ def _gen_cases() -> list[tuple[str, bytes]]:
 CASES = _gen_cases()
 
 
-def _run_case(args) -> tuple[str, int, bytes, bytes]:
+def _run_case_subprocess(args) -> tuple[str, int, bytes, bytes]:
     label, source, tmp_root = args
     case_dir = tmp_root / label.replace("/", "_")
     case_dir.mkdir(parents=True, exist_ok=True)
@@ -123,12 +125,91 @@ def _run_case(args) -> tuple[str, int, bytes, bytes]:
     return label, proc.returncode, proc.stdout, proc.stderr
 
 
-def test_fuzz_no_tracebacks(tmp_path):
-    work = [(label, src, tmp_path) for label, src in CASES]
-    failures: list[str] = []
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(_run_case, work))
+def _run_case_in_process(args) -> tuple[str, int, bytes, bytes]:
+    label, source, tmp_root = args
+    case_dir = tmp_root / label.replace("/", "_")
+    case_dir.mkdir(parents=True, exist_ok=True)
+    src_path = case_dir / "in.oda"
+    src_path.write_bytes(source)
+    out_dir = case_dir / "out"
 
+    from src.oda.main import main
+
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    orig_argv = sys.argv
+    sys.argv = [
+        "oda",
+        "transpile",
+        str(src_path),
+        "-o",
+        str(out_dir),
+        "--output-format=json",
+    ]
+
+    rc = 0
+    try:
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            main()
+    except SystemExit as e:
+        code = e.code
+        if code is None:
+            rc = 0
+        elif isinstance(code, int):
+            rc = code
+        else:
+            rc = 1
+    except Exception as e:
+        rc = 99
+        stderr.write(f"Internal: {e}")
+    finally:
+        sys.argv = orig_argv
+
+    return (
+        label,
+        rc,
+        stdout.getvalue().encode("utf-8"),
+        stderr.getvalue().encode("utf-8"),
+    )
+
+
+def test_fuzz_no_tracebacks(tmp_path):
+    import time
+    start_time = time.time()
+    
+    # Smoke subset for subprocess testing (20 cases: 10 soup, 5 mut, 5 edge)
+    # Remaining cases are run in-process for speed.
+    sub_cases = []
+    in_proc_cases = []
+    
+    soup_count = 0
+    mut_count = 0
+    edge_count = 0
+    for label, src in CASES:
+        if label.startswith("soup_") and soup_count < 10:
+            sub_cases.append((label, src))
+            soup_count += 1
+        elif label.startswith("mut_") and mut_count < 5:
+            sub_cases.append((label, src))
+            mut_count += 1
+        elif (label == "empty" or label == "newlines" or label == "unterminated_string" or label.startswith("braces_") or label == "long_identifier" or label == "non_utf8" or label == "null_byte") and edge_count < 5:
+            sub_cases.append((label, src))
+            edge_count += 1
+        else:
+            in_proc_cases.append((label, src))
+
+    # Run subprocess cases in parallel
+    work_sub = [(label, src, tmp_path) for label, src in sub_cases]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(_run_case_subprocess, work_sub))
+        
+    # Run in-process cases sequentially (fast)
+    work_in_proc = [(label, src, tmp_path) for label, src in in_proc_cases]
+    for args in work_in_proc:
+        results.append(_run_case_in_process(args))
+
+    failures: list[str] = []
     for label, rc, out, err in results:
         # 1. exit code is always a clean compiler exit, never a crash
         if rc not in (0, 1):
@@ -144,3 +225,8 @@ def test_fuzz_no_tracebacks(tmp_path):
                     f"{label}: exit 1 but output not JSON: {blob[:200]!r}")
 
     assert not failures, "non-structured failures:\n" + "\n".join(failures)
+    duration = time.time() - start_time
+    # Case counts: 20 subprocess cases, 366 in-process cases (total 386 cases).
+    assert duration < 25.0, f"Fuzz test took {duration:.2f}s, which is over the 25s budget"
+
+
