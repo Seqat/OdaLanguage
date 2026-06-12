@@ -259,6 +259,32 @@ demo()
 '''
     assert compile_and_run(src) == "6"
 
+def test_multidim_heap_full_grid_scope_exit_is_asan_clean():
+    # `compile_and_run` builds with ODA_TEST_CFLAGS (-fsanitize=address under
+    # `make test-asan`) and runs via run_generated_binary, which halts on any
+    # ASan error and detects leaks. A missed inner-row free (leak) or a
+    # use-after-free at scope exit would abort the run with a nonzero exit,
+    # so a clean stdout here asserts a leak-free, UAF-free heap lifecycle.
+    src = '''
+func fill() {
+    int[][] grid = new int[3][4]
+    for (int i = 0; i < 3; i += 1) {
+        for (int j = 0; j < 4; j += 1) {
+            grid[i][j] = i * 4 + j
+        }
+    }
+    int total = 0
+    for (int i = 0; i < 3; i += 1) {
+        for (int j = 0; j < 4; j += 1) {
+            total += grid[i][j]
+        }
+    }
+    print(total)
+}
+fill()
+'''
+    assert compile_and_run(src) == "66"
+
 def test_nested_array_literal_no_void_cast():
     src = '''
 int[][] matrix
@@ -283,6 +309,34 @@ print(matrix[1][0])
         result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
 
     assert result.stdout.strip() == "3"
+
+def test_nested_array_literal_initializer_no_void_cast():
+    # Declaration-with-initializer path (_emit_var_decl -> _emit_array_expr),
+    # distinct from the bare-assignment path above. The nested literal must
+    # carry the declared element type, not erase it to (void*).
+    src = '''
+int[][] matrix = [[1, 2], [3, 4]]
+print(matrix[1][0])
+print(matrix[0][1])
+'''
+    c_code = _pipeline(src, "<test>")
+
+    assert "(void*)" not in c_code
+    assert "int** matrix = (int*[]){" in c_code
+
+    with tempfile.TemporaryDirectory() as tmp:
+        c_path = Path(tmp) / "out.c"
+        bin_path = Path(tmp) / "out"
+        c_path.write_text(c_code)
+        subprocess.run(
+            ["gcc", str(c_path), *TEST_CFLAGS, "-Wall", "-Wextra", "-Werror", "-o", str(bin_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        result = run_generated_binary([str(bin_path)], capture_output=True, text=True)
+
+    assert result.stdout.strip() == "3\n2"
 
 def test_string_interpolation_with_string_identifier():
     src = '''
