@@ -2,16 +2,7 @@
 from __future__ import annotations
 from . import ast_nodes as ast
 from .errors import SemanticError
-
-# Widening-only coercion table: source → allowed targets
-_WIDENING = {
-    "int":   {"float"},
-    "uint":  {"float"},
-    "float": set(),
-    "char":  {"string"},
-    "bool":  set(),
-    "string": set(),
-}
+from .type_engine import BUILTIN_TYPES, can_coerce, infer_binary_type, infer_type
 
 _STANDARD_ERROR_TYPES = {
     "FileNotFound",
@@ -101,8 +92,8 @@ class SemanticAnalyzer:
             ),
         )
 
-    def _err(self, msg: str, node: ast.Node):
-        self.errors.append(SemanticError(msg, node.line, node.column, self.filename))
+    def _err(self, msg: str, node: ast.Node, code: str = "E3000", hint: str | None = None):
+        self.errors.append(SemanticError(msg, node.line, node.column, self.filename, code=code, hint=hint))
 
     @property
     def _current_class(self) -> str | None:
@@ -199,7 +190,7 @@ class SemanticAnalyzer:
                 is_valid = True
 
             if not is_valid:
-                self._err(f"Cannot iterate over unknown-size collection", stmt)
+                self._err(f"Cannot iterate over unknown-size collection", stmt, code="E3004")
 
             self._push_scope("for-in")
             self._loop_depth += 1
@@ -215,34 +206,34 @@ class SemanticAnalyzer:
             if self._current_return_type:
                 expected = self._full_type(self._current_return_type)
                 if not stmt.value:
-                    self._err(f"Function must return '{expected}'", stmt)
+                    self._err(f"Function must return '{expected}'", stmt, code="E3005")
                 else:
                     self._analyze_expr(stmt.value)
                     actual = self._infer_type(stmt.value)
                     if actual == "void":
-                        self._err("Cannot return a void value", stmt)
+                        self._err("Cannot return a void value", stmt, code="E3006")
                     elif actual and actual != expected and not self._can_coerce(actual, expected):
-                        self._err(f"Cannot return '{actual}' from function returning '{expected}'", stmt)
+                        self._err(f"Cannot return '{actual}' from function returning '{expected}'", stmt, code="E3007")
             elif stmt.value:
                 self._analyze_expr(stmt.value)
                 if self._infer_type(stmt.value) == "void":
-                    self._err("Cannot return a void value", stmt)
+                    self._err("Cannot return a void value", stmt, code="E3006")
         elif isinstance(stmt, (ast.BreakStatement, ast.ContinueStatement)):
             if self._loop_depth == 0:
-                self._err("break/continue cannot be used outside a loop", stmt)
+                self._err("break/continue cannot be used outside a loop", stmt, code="E3008")
         elif isinstance(stmt, ast.GuardStatement):
             self._analyze_expr(stmt.expr)
             # Enforce that every case in guard MUST exit the scope
             for case in stmt.cases:
                 if case.error_type not in _STANDARD_ERROR_TYPES:
-                    self._err(f"Unknown error type '{case.error_type}'", case)
+                    self._err(f"Unknown error type '{case.error_type}'", case, code="E3009")
                 has_exit = False
                 for body_stmt in case.body:
                     if isinstance(body_stmt, (ast.ReturnStatement, ast.BreakStatement, ast.ContinueStatement)):
                         has_exit = True
                         break
                 if not has_exit:
-                    self._err("guard else block must exit the current scope (return or break required)", case)
+                    self._err("guard else block must exit the current scope (return or break required)", case, code="E3002", hint="return, break, continue")
             
             for case in stmt.cases:
                 self._analyze_block(case.body)
@@ -263,7 +254,7 @@ class SemanticAnalyzer:
                         and not self._can_coerce(pattern_type, match_type)
                         and not self._can_coerce(match_type, pattern_type)
                     ):
-                        self._err(f"Match pattern type '{pattern_type}' does not match '{match_type}'", arm)
+                        self._err(f"Match pattern type '{pattern_type}' does not match '{match_type}'", arm, code="E3010")
                 self._analyze_block(arm.body)
         elif isinstance(stmt, ast.ExpressionStatement):
             if stmt.expr:
@@ -308,12 +299,12 @@ class SemanticAnalyzer:
 
     def _check_param_decl(self, param: ast.Parameter, owner_name: str):
         if not self._type_exists(param.type_ann):
-            self._err(f"Unknown type '{param.type_ann.base_type}'", param)
+            self._err(f"Unknown type '{param.type_ann.base_type}'", param, code="E3011")
         if self._param_requires_ref(param) and not param.is_ref:
             self._err(
                 f"Parameter '{param.name}' of function '{owner_name}' has class "
                 f"'{param.type_ann.base_type}' with heap-allocated fields and must be passed by ref",
-                param,
+                param, code="E3012"
             )
 
     def _analyze_var_decl(self, stmt: ast.VarDeclaration):
@@ -321,22 +312,23 @@ class SemanticAnalyzer:
         base = stmt.type_ann.base_type
         # Verify the type exists
         if not self._type_exists(stmt.type_ann):
-            self._err(f"Unknown type '{base}'", stmt)
+            self._err(f"Unknown type '{base}'", stmt, code="E3013")
 
         # Null safety: non-nullable vars must have an initializer or will be set
         if stmt.initializer:
             self._analyze_expr(stmt.initializer)
             init_type = self._infer_type(stmt.initializer)
             if init_type == "void":
-                self._err("Cannot assign a void value to a variable", stmt)
+                self._err("Cannot assign a void value to a variable", stmt, code="E3014")
             elif init_type and init_type != full:
                 # Basic check, no complex coercion for arrays yet
                 if not self._can_coerce(init_type, full):
-                    self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt)
+                    hint = f"as {full}" if init_type in ("int", "uint") and full in ("int", "uint") else None
+                    self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt, code="E3001", hint=hint)
 
             # Non-nullable assigned null
             if not stmt.type_ann.is_nullable and isinstance(stmt.initializer, ast.NullLiteral):
-                self._err(f"Cannot assign null to non-nullable '{full}'", stmt)
+                self._err(f"Cannot assign null to non-nullable '{full}'", stmt, code="E3015")
 
         self.scope.define(Symbol(stmt.name, stmt.type_ann, is_immutable=stmt.is_immutable))
 
@@ -344,7 +336,7 @@ class SemanticAnalyzer:
         for p in stmt.params:
             self._check_param_decl(p, stmt.name)
         if stmt.return_type and not self._type_exists(stmt.return_type):
-            self._err(f"Unknown return type '{stmt.return_type.base_type}'", stmt)
+            self._err(f"Unknown return type '{stmt.return_type.base_type}'", stmt, code="E3016")
         if stmt.is_extern:
             return
 
@@ -356,7 +348,7 @@ class SemanticAnalyzer:
             self.scope.define(Symbol(p.name, p.type_ann, is_ref=p.is_ref))
         self._analyze_block(stmt.body)
         if stmt.return_type and not self._block_always_returns(stmt.body):
-            self._err(f"Not all code paths return a value from function '{stmt.name}'", stmt)
+            self._err(f"Not all code paths return a value from function '{stmt.name}'", stmt, code="E3017")
         self.scope = old_scope
         self._current_return_type = old_return_type
 
@@ -382,7 +374,7 @@ class SemanticAnalyzer:
         seen = set()
         for variant in stmt.variants:
             if variant in seen:
-                self._err(f"Duplicate enum variant '{variant}' in enum '{stmt.name}'", stmt)
+                self._err(f"Duplicate enum variant '{variant}' in enum '{stmt.name}'", stmt, code="E3018")
             seen.add(variant)
 
     def _analyze_if(self, stmt: ast.IfStatement):
@@ -433,10 +425,10 @@ class SemanticAnalyzer:
             return
         if ref:
             if actual != expected:
-                self._err(f"Cannot pass '{actual}' as ref '{expected}'", node)
+                self._err(f"Cannot pass '{actual}' as ref '{expected}'", node, code="E3019")
             return
         if actual != expected and not self._can_coerce(actual, expected):
-            self._err(f"Cannot pass '{actual}' to parameter of type '{expected}'", node)
+            self._err(f"Cannot pass '{actual}' to parameter of type '{expected}'", node, code="E3020")
 
     def _check_call(self, call: ast.CallExpr):
         sig = self._resolve_call_signature(call)
@@ -446,14 +438,14 @@ class SemanticAnalyzer:
 
         if name == "print":
             if len(call.args) > 1:
-                self._err(f"Function 'print' expects 0 or 1 argument(s), got {len(call.args)}", call)
+                self._err(f"Function 'print' expects 0 or 1 argument(s), got {len(call.args)}", call, code="E3021")
             for is_ref in call.ref_flags:
                 if is_ref:
-                    self._err("Function 'print' does not accept ref arguments", call)
+                    self._err("Function 'print' does not accept ref arguments", call, code="E3022")
             return
 
         if len(call.args) != len(params):
-            self._err(f"Function '{name}' expects {len(params)} argument(s), got {len(call.args)}", call)
+            self._err(f"Function '{name}' expects {len(params)} argument(s), got {len(call.args)}", call, code="E3023")
             return
 
         for i, (arg, param) in enumerate(zip(call.args, params)):
@@ -463,19 +455,19 @@ class SemanticAnalyzer:
 
             if param.is_ref:
                 if not is_ref_call:
-                    self._err(f"Parameter '{param.name}' of function '{name}' must be passed with 'ref'", arg)
+                    self._err(f"Parameter '{param.name}' of function '{name}' must be passed with 'ref'", arg, code="E3024")
                 if not self._is_lvalue(arg):
-                    self._err(f"Cannot pass non-assignable expression as ref parameter '{param.name}'", arg)
+                    self._err(f"Cannot pass non-assignable expression as ref parameter '{param.name}'", arg, code="E3025")
                 self._check_type_compatible(actual, expected, arg, ref=True)
             else:
                 if self._param_requires_ref(param):
                     self._err(
                         f"Cannot pass class '{param.type_ann.base_type}' with heap-allocated fields by value; "
                         "declare the parameter as ref",
-                        arg,
+                        arg, code="E3026"
                     )
                 if is_ref_call:
-                    self._err(f"Parameter '{param.name}' of function '{name}' is not a ref parameter", arg)
+                    self._err(f"Parameter '{param.name}' of function '{name}' is not a ref parameter", arg, code="E3027")
                 self._check_type_compatible(actual, expected, arg)
 
     def _resolve_call_signature(self, call: ast.CallExpr) -> tuple[str, list[ast.Parameter]] | None:
@@ -487,22 +479,22 @@ class SemanticAnalyzer:
             func_info = self.functions.get(name)
             if func_info:
                 return name, func_info.decl.params
-            self._err(f"Undefined function '{name}'", call.callee)
+            self._err(f"Undefined function '{name}'", call.callee, code="E3028")
             return None
 
         if isinstance(call.callee, ast.MemberAccess):
             obj_type = self._infer_type(call.callee.obj)
             ci = self.classes.get(obj_type) if obj_type else None
             if not ci:
-                self._err(f"Cannot call method '{call.callee.member}' on non-class type '{obj_type}'", call.callee)
+                self._err(f"Cannot call method '{call.callee.member}' on non-class type '{obj_type}'", call.callee, code="E3029")
                 return None
             for method in ci.decl.methods:
                 if method.name == call.callee.member:
                     return f"{obj_type}.{method.name}", method.params
-            self._err(f"Class '{obj_type}' has no method '{call.callee.member}'", call.callee)
+            self._err(f"Class '{obj_type}' has no method '{call.callee.member}'", call.callee, code="E3030")
             return None
 
-        self._err("Unsupported call target", call)
+        self._err("Unsupported call target", call, code="E3031")
         return None
 
     # ── expressions ──────────────────────────────────────────
@@ -514,9 +506,9 @@ class SemanticAnalyzer:
                 if self._current_class and expr.name.startswith("_"):
                     ci = self.classes.get(self._current_class)
                     if not ci or expr.name not in ci.field_types:
-                        self._err(f"Unknown private field '{expr.name}' in class '{self._current_class}'", expr)
+                        self._err(f"Unknown private field '{expr.name}' in class '{self._current_class}'", expr, code="E3032")
                 else:
-                    self._err(f"Undefined variable '{expr.name}'", expr)
+                    self._err(f"Undefined variable '{expr.name}'", expr, code="E3033")
         elif isinstance(expr, ast.AssignExpr):
             self._analyze_expr(expr.target)
             self._analyze_expr(expr.value)
@@ -524,17 +516,21 @@ class SemanticAnalyzer:
             if isinstance(expr.target, ast.Identifier):
                 sym = self.scope.lookup(expr.target.name)
                 if sym and sym.is_immutable:
-                    self._err(f"Cannot reassign immutable variable '{expr.target.name}' (declared with 'stay')", expr)
+                    self._err(f"Cannot reassign immutable variable '{expr.target.name}' (declared with 'stay')", expr, code="E3034")
+            elif isinstance(expr.target, ast.IndexAccess) and isinstance(expr.target.obj, ast.Identifier):
+                sym = self.scope.lookup(expr.target.obj.name)
+                if sym and sym.is_immutable:
+                    self._err("Cannot modify element of immutable array", expr.target, code="E3035")
         elif isinstance(expr, ast.BinaryExpr):
             self._analyze_expr(expr.left)
             self._analyze_expr(expr.right)
             inferred = self._infer_type(expr)
             if self._infer_type(expr.left) == "void" or self._infer_type(expr.right) == "void":
-                self._err("Cannot use a void expression in a binary operation", expr)
+                self._err("Cannot use a void expression in a binary operation", expr, code="E3036")
             elif inferred is None:
                 left_type = self._infer_type(expr.left)
                 right_type = self._infer_type(expr.right)
-                self._err(f"Invalid operands for '{expr.op}': '{left_type}' and '{right_type}'", expr)
+                self._err(f"Invalid operands for '{expr.op}': '{left_type}' and '{right_type}'", expr, code="E3037")
         elif isinstance(expr, ast.UnaryExpr):
             self._analyze_expr(expr.operand)
         elif isinstance(expr, ast.CastExpr):
@@ -546,12 +542,12 @@ class SemanticAnalyzer:
             for a in expr.args:
                 self._analyze_expr(a)
                 if self._infer_type(a) == "void":
-                    self._err("Cannot use a void function call as an argument", a)
+                    self._err("Cannot use a void function call as an argument", a, code="E3038")
         elif isinstance(expr, ast.MemberAccess):
             if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
                 enum_info = self.enums[expr.obj.name]
                 if expr.member not in enum_info.variants:
-                    self._err(f"Enum '{expr.obj.name}' has no variant '{expr.member}'", expr)
+                    self._err(f"Enum '{expr.obj.name}' has no variant '{expr.member}'", expr, code="E3039")
                 return
             self._analyze_expr(expr.obj)
             if expr.member.startswith("_"):
@@ -559,18 +555,20 @@ class SemanticAnalyzer:
                 ci = self.classes.get(owner_class) if owner_class else None
                 owns_private_field = ci is not None and expr.member in ci.field_types
                 if not owns_private_field:
-                    self._err(f"Unknown private member '{expr.member}'", expr)
+                    self._err(f"Unknown private member '{expr.member}'", expr, code="E3040")
                 elif self._current_class != owner_class:
                     self._err(
                         f"Cannot access private member '{expr.member}' outside class '{owner_class}'",
-                        expr
+                        expr,
+                        code="E3003",
+                        hint=f"Owner: {owner_class}"
                     )
         elif isinstance(expr, ast.IndexAccess):
             self._analyze_expr(expr.obj)
             self._analyze_expr(expr.index)
             index_type = self._infer_type(expr.index)
             if index_type not in ("int", "uint", None):
-                self._err("Array index must be an integer expression", expr.index)
+                self._err("Array index must be an integer expression", expr.index, code="E3041")
         elif isinstance(expr, ast.InterpolatedString):
             for part in expr.parts:
                 if not isinstance(part, str):
@@ -580,26 +578,26 @@ class SemanticAnalyzer:
                 self._analyze_expr(sz)
                 sz_type = self._infer_type(sz)
                 if sz_type not in ("int", "uint") and sz_type is not None:
-                    self._err("Array dimensions must be integer expressions", expr)
+                    self._err("Array dimensions must be integer expressions", expr, code="E3042")
 
     def _analyze_cast(self, expr: ast.CastExpr):
         target = expr.target_type
         if not target or not self._type_exists(target):
             name = self._full_type(target) if target else "<unknown>"
-            self._err(f"Unknown cast target type '{name}'", expr)
+            self._err(f"Unknown cast target type '{name}'", expr, code="E3043")
             return
         source = self._infer_type(expr.expr)
         dest = self._full_type(target)
         if source is None:
             return
         if target.is_array or target.is_nullable:
-            self._err(f"Cannot cast to non-scalar type '{dest}'", expr)
+            self._err(f"Cannot cast to non-scalar type '{dest}'", expr, code="E3044")
             return
         if not self._can_explicit_cast(source, dest):
-            self._err(f"Cannot cast '{source}' to '{dest}'", expr)
+            self._err(f"Cannot cast '{source}' to '{dest}'", expr, code="E3045")
 
     def _type_exists(self, ta: ast.TypeAnnotation) -> bool:
-        return ta.base_type in _WIDENING or ta.base_type in self.classes or ta.base_type in self.enums
+        return ta.base_type in BUILTIN_TYPES or ta.base_type in self.classes or ta.base_type in self.enums
 
     def _can_explicit_cast(self, src: str, dst: str) -> bool:
         if src == dst:
@@ -615,134 +613,10 @@ class SemanticAnalyzer:
 
     # ── type inference (basic) ───────────────────────────────
     def _infer_type(self, expr) -> str | None:
-        if isinstance(expr, ast.IntegerLiteral):
-            return "int"
-        if isinstance(expr, ast.UIntLiteral):
-            return "uint"
-        if isinstance(expr, ast.FloatLiteral):
-            return "float"
-        if isinstance(expr, (ast.StringLiteral, ast.InterpolatedString)):
-            return "string"
-        if isinstance(expr, ast.BoolLiteral):
-            return "bool"
-        if isinstance(expr, ast.NullLiteral):
-            return None
-        if isinstance(expr, ast.ArrayLiteral):
-            if not expr.elements: return "any[]"
-            et = self._infer_type(expr.elements[0])
-            return f"{et}[]" if et else "any[]"
-        if isinstance(expr, ast.ArrayAllocation):
-            return expr.base_type + ("[]" * len(expr.sizes))
-        if isinstance(expr, ast.Identifier):
-            sym = self.scope.lookup(expr.name)
-            return self._full_type(sym.type_ann) if sym else None
-        if isinstance(expr, ast.MemberAccess):
-            if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
-                enum_info = self.enums[expr.obj.name]
-                if expr.member in enum_info.variants:
-                    return expr.obj.name
-                return None
-            obj_type = self._infer_type(expr.obj)
-            ci = self.classes.get(obj_type) if obj_type else None
-            if ci and expr.member in ci.field_types:
-                return self._full_type(ci.field_types[expr.member])
-            return None
-        if isinstance(expr, ast.IndexAccess):
-            obj_type = self._infer_type(expr.obj)
-            if not obj_type:
-                return None
-            if obj_type.endswith("[]"):
-                return obj_type[:-2]
-            if obj_type == "string":
-                return "char"
-            return None
-        if isinstance(expr, ast.UnaryExpr):
-            operand_type = self._infer_type(expr.operand)
-            if expr.op == "!" and operand_type == "bool":
-                return "bool"
-            if expr.op == "-" and operand_type in ("int", "uint", "float"):
-                return operand_type
-            return None
-        if isinstance(expr, ast.CastExpr):
-            return self._full_type(expr.target_type)
-        if isinstance(expr, ast.BinaryExpr):
-            return self._infer_binary_type(expr)
-        if isinstance(expr, ast.CallExpr):
-            if isinstance(expr.callee, ast.Identifier):
-                if expr.callee.name in self.classes:
-                    return expr.callee.name
-                func_info = self.functions.get(expr.callee.name)
-                if func_info:
-                    if func_info.decl.return_type:
-                        return self._full_type(func_info.decl.return_type)
-                    return "void"
-            elif isinstance(expr.callee, ast.MemberAccess):
-                obj_type = self._infer_type(expr.callee.obj)
-                if obj_type and obj_type in self.classes:
-                    ci = self.classes[obj_type]
-                    for m in ci.decl.methods:
-                        if m.name == expr.callee.member:
-                            if m.return_type:
-                                return self._full_type(m.return_type)
-                            return "void"
-            return None
-
-        return None
+        return infer_type(expr, self.scope, self.classes, self.enums, self.functions)
 
     def _infer_binary_type(self, expr: ast.BinaryExpr) -> str | None:
-        left = self._infer_type(expr.left)
-        right = self._infer_type(expr.right)
-
-        if expr.op == "??":
-            return left or right
-
-        if expr.op in ("&&", "||"):
-            return "bool" if left == "bool" and right == "bool" else None
-
-        if expr.op in ("==", "!="):
-            if left == right or self._can_coerce(left, right) or self._can_coerce(right, left):
-                return "bool"
-            return None
-
-        if expr.op in ("<", ">", "<=", ">="):
-            if self._common_numeric_type(left, right) or (left == "char" and right == "char"):
-                return "bool"
-            return None
-
-        if expr.op == "+" and (left == "string" or right == "string"):
-            if left in ("string", "int", "uint", "float", "bool", "char") and right in ("string", "int", "uint", "float", "bool", "char"):
-                return "string"
-            return None
-
-        if expr.op in ("+", "-", "*", "/", "%"):
-            common = self._common_numeric_type(left, right)
-            if expr.op == "%" and common == "float":
-                return None
-            return common
-
-        return None
-
-    def _common_numeric_type(self, left: str | None, right: str | None) -> str | None:
-        numeric = ("char", "int", "uint", "float")
-        if left not in numeric or right not in numeric:
-            return None
-        if left == right:
-            return left
-        if left == "char":
-            left = "int"
-        if right == "char":
-            right = "int"
-        if left == right:
-            return left
-        if left == "float" and self._can_coerce(right, "float"):
-            return "float"
-        if right == "float" and self._can_coerce(left, "float"):
-            return "float"
-        return None
+        return infer_binary_type(expr, self.scope, self.classes, self.enums, self.functions)
 
     def _can_coerce(self, src: str, dst: str) -> bool:
-        if src is None or dst is None:
-            return False
-        if src == dst:
-            return True
-        return dst in _WIDENING.get(src, set())
+        return can_coerce(src, dst)

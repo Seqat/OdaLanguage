@@ -1,6 +1,7 @@
 """C code generator — translates the OdaLanguage AST into a Unity Build C file."""
 from __future__ import annotations
 from . import ast_nodes as ast
+from .type_engine import infer_type
 
 # C type mapping
 _C_TYPES = {
@@ -544,7 +545,7 @@ class CCodeGenerator:
         old_refs = self._ref_params
         self._ref_params = {p.name for p in func.params if p.is_ref}
         for p in func.params:
-            self._var_types[p.name] = p.type_ann.base_type
+            self._remember_var_type(p.name, p.type_ann)
         body_lines: list[str] = []
         self._func_starts.append(len(self._destructors))
         self._func_heap_starts.append(len(self._heap_vars))
@@ -730,8 +731,7 @@ class CCodeGenerator:
             
             dims = [str(dim) for dim in dims]
             self._var_sizes[v.name] = dims
-            self._var_types[v.name] = v.type_ann.base_type
-            self._var_array_depths[v.name] = v.type_ann.array_depth
+            self._remember_var_type(v.name, v.type_ann)
 
             if v.initializer:
                 owns_initializer = self._expr_allocates_heap(v.initializer)
@@ -773,7 +773,7 @@ class CCodeGenerator:
             if v.type_ann.base_type in self._class_names:
                 out.append(f"{v.type_ann.base_type} {v.name};")
                 out.append(f"(void){v.name};")
-                self._var_types[v.name] = v.type_ann.base_type
+                self._remember_var_type(v.name, v.type_ann)
                 if isinstance(v.initializer, ast.CallExpr):
                     call = v.initializer
                     lookup_name = f"{v.type_ann.base_type}_construct"
@@ -797,7 +797,7 @@ class CCodeGenerator:
             out += prelude
             out.append(f"{prefix}{ct} {v.name} = {init_expr};")
             out.append(f"(void){v.name};")
-            self._var_types[v.name] = v.type_ann.base_type
+            self._remember_var_type(v.name, v.type_ann)
             if self._expr_allocates_heap(v.initializer):
                 self._heap_vars.append(v.name)
         else:
@@ -806,7 +806,7 @@ class CCodeGenerator:
             else:
                 out.append(f"{prefix}{ct} {v.name};")
             out.append(f"(void){v.name};")
-            self._var_types[v.name] = v.type_ann.base_type
+            self._remember_var_type(v.name, v.type_ann)
 
     def _emit_expr_stmt(self, stmt: ast.ExpressionStatement, out: list[str], class_ctx=None):
         expr = stmt.expr
@@ -829,44 +829,49 @@ class CCodeGenerator:
             return "%d"
         return _FMT.get(oda_type, "%s")
 
+    def _type_scope(self, class_ctx=None) -> dict[str, object]:
+        scope: dict[str, object] = {}
+        for name, base_type in self._var_types.items():
+            depth = self._var_array_depths.get(name, 0)
+            scope[name] = ast.TypeAnnotation(
+                base_type=base_type,
+                is_array=depth > 0,
+                array_depth=depth,
+            )
+        if class_ctx:
+            scope["self"] = ast.TypeAnnotation(base_type=class_ctx)
+            scope.update(self._class_field_types.get(class_ctx, {}))
+        return scope
+
+    def _type_classes(self) -> dict[str, dict[str, str]]:
+        return {
+            class_name: dict(field_types)
+            for class_name, field_types in self._class_field_types.items()
+        }
+
+    def _type_functions(self) -> dict[str, str]:
+        functions = {"input": "string", "readFile": "string"}
+        functions.update(self._func_return_types)
+        return functions
+
+    def _remember_var_type(self, name: str, type_ann: ast.TypeAnnotation):
+        if type_ann is None:
+            return
+        self._var_types[name] = type_ann.base_type
+        self._var_array_depths[name] = type_ann.array_depth if type_ann.is_array else 0
+
     def _infer_expr_type(self, node, class_ctx=None) -> str:
         """Best-effort type inference for printf format selection."""
-        if isinstance(node, ast.IntegerLiteral):
-            return "int"
-        if isinstance(node, ast.UIntLiteral):
-            return "uint"
-        if isinstance(node, ast.FloatLiteral):
-            return "float"
-        if isinstance(node, (ast.StringLiteral, ast.InterpolatedString)):
-            return "string"
         if isinstance(node, ast.CharLiteral):
             return "char"
-        if isinstance(node, ast.BoolLiteral):
-            return "bool"
-        if isinstance(node, ast.Identifier):
-            if class_ctx and node.name in self._class_field_types.get(class_ctx, {}):
-                return self._class_field_types[class_ctx][node.name]
-            return self._var_types.get(node.name, "string")
-        if isinstance(node, ast.MemberAccess):
-            if isinstance(node.obj, ast.Identifier) and node.obj.name in self._enum_variants:
-                return node.obj.name
-            if class_ctx and isinstance(node.obj, ast.Identifier) and node.obj.name == "self":
-                return self._class_field_types.get(class_ctx, {}).get(node.member, "string")
-            obj_type = self._infer_expr_type(node.obj, class_ctx)
-            return self._class_field_types.get(obj_type, {}).get(node.member, "string")
-        if isinstance(node, ast.BinaryExpr):
-            if node.op == "+" and self._looks_like_string(node, class_ctx):
-                return "string"
-            return self._infer_expr_type(node.left, class_ctx)
-        if isinstance(node, ast.CallExpr):
-            if isinstance(node.callee, ast.Identifier):
-                name = node.callee.name
-                if name == "input": return "string"
-                if name == "readFile": return "string"
-                return self._func_return_types.get(name, "string")
-        if isinstance(node, ast.IndexAccess):
-            return self._infer_expr_type(node.obj, class_ctx)
-        return "string"
+        inferred = infer_type(
+            node,
+            self._type_scope(class_ctx),
+            self._type_classes(),
+            self._enum_variants,
+            self._type_functions(),
+        )
+        return inferred or "string"
 
     def _emit_print(self, call: ast.CallExpr, out: list[str], class_ctx=None):
         if not call.args:
@@ -954,7 +959,7 @@ class CCodeGenerator:
             prelude, init_expr = self._capture_expr(stmt.init.initializer, class_ctx)
             out += prelude
             init_s = f"{ct} {stmt.init.name} = {init_expr}"
-            self._var_types[stmt.init.name] = stmt.init.type_ann.base_type
+            self._remember_var_type(stmt.init.name, stmt.init.type_ann)
         prelude, cond_s = self._capture_expr(stmt.condition, class_ctx) if stmt.condition else ([], "")
         out += prelude
         prelude, upd_s = self._capture_expr(stmt.update, class_ctx) if stmt.update else ([], "")
@@ -973,7 +978,7 @@ class CCodeGenerator:
         out += prelude
         prelude, step_expr = self._capture_expr(stmt.step, class_ctx) if stmt.step else ([], "1")
         out += prelude
-        self._var_types[stmt.var_name] = stmt.var_type.base_type
+        self._remember_var_type(stmt.var_name, stmt.var_type)
         
         s_tmp = self._next_temp() + "_s"
         e_tmp = self._next_temp() + "_e"
@@ -1033,9 +1038,9 @@ class CCodeGenerator:
                 out.append(f"for (int {idx} = {size_tmp} - 1; {idx} >= 0; {idx} -= {step_s}) {{")
                 
             if stmt.index_name:
-                self._var_types[stmt.index_name] = stmt.index_type.base_type
+                self._remember_var_type(stmt.index_name, stmt.index_type)
                 out.append(f"    {self._c_type(stmt.index_type)} {stmt.index_name} = ({self._c_type(stmt.index_type)}){idx};")
-            self._var_types[stmt.var_name] = stmt.var_type.base_type
+            self._remember_var_type(stmt.var_name, stmt.var_type)
             if stmt.var_type.base_type == "string":
                 out.append(f"    char {stmt.var_name}_buf[2] = {{ {iter_tmp}[{idx}], '\\0' }};")
                 out.append(f"    char* {stmt.var_name} = {stmt.var_name}_buf;")
@@ -1048,7 +1053,7 @@ class CCodeGenerator:
             out.append("}")
         elif dims and len(dims) > 0:
             size = dims[0]
-            self._var_types[stmt.var_name] = stmt.var_type.base_type
+            self._remember_var_type(stmt.var_name, stmt.var_type)
             if len(dims) > 1:
                 self._var_sizes[stmt.var_name] = dims[1:]
             
@@ -1062,7 +1067,7 @@ class CCodeGenerator:
                 out.append(f"for (int {idx} = {size} - 1; {idx} >= 0; {idx} -= {step_s}) {{")
             
             if stmt.index_name:
-                self._var_types[stmt.index_name] = stmt.index_type.base_type
+                self._remember_var_type(stmt.index_name, stmt.index_type)
                 out.append(f"    {self._c_type(stmt.index_type)} {stmt.index_name} = ({self._c_type(stmt.index_type)}){idx};")
             out.append(f"    {self._c_type(stmt.var_type)} {stmt.var_name} = {iterable_s}[{idx}];")
             body = []

@@ -21,7 +21,7 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 | C transpilation | `.oda` source is lowered into a single C translation unit. |
 | Semi-static typing | Explicit primitive, array, function, and class annotations. |
 | Null safety | Nullable values use `?`; fallback expressions use `??`; `guard ... when` unwraps nullable results. |
-| Immutability | `stay` marks a variable as immutable after initialization. |
+| Immutability | `stay` marks a value as immutable after initialization, including array elements. |
 | RAII-style cleanup | `destruct()` is called automatically when generated scopes exit. |
 | Ranges and loops | `for-in`, `while`, C-style `for`, `..`, `..=`, `step`, and `reversed`. |
 | Arrays | Dynamic-style literals, fixed-size annotations, multidimensional arrays, and `new` allocation. |
@@ -34,6 +34,7 @@ Lexer -> Parser -> AST -> Semantic Analyzer -> C Code Generator -> native binary
 | Unsigned integers | `uint` values can be written with a `u` suffix, such as `5u`. |
 | File and console I/O | `readFile()` and `input()` builtins. |
 | Strict semantic checking | Semantic errors stop compilation before C generation. |
+| Shared type engine | Semantic analysis and code generation use one expression type inference engine. |
 | Explicit memory scopes | Block scopes isolate variables and generated RAII cleanup is tied to lexical scope exits. |
 | Machine-readable diagnostics | `--output-format=json` emits parser and semantic errors as structured JSON. |
 | AST export | `export-ast` serializes parsed code structure as JSON for agent analysis. |
@@ -74,6 +75,12 @@ make test-asan
 ```
 
 This target runs `python -m pytest tests` with `ODA_TEST_CFLAGS="-fsanitize=address -g"`, so integration tests compile generated C with ASan instrumentation and fail if the generated binaries report memory errors. During local development, use `make test-asan` as the final check after `make test`, or run it directly when working on memory-owning language features.
+
+## Semantic Negative Tests
+
+Programs under `tests/semantic_negative/` are expected to fail before C generation. Each file starts with an `# EXPECT_ERROR: ...` metadata line, and `tests/test_semantic_negative.py` checks that `_pipeline()` rejects the program with a matching semantic diagnostic.
+
+These cases document Oda's fail-fast contract for private member access, null assignment to non-nullable variables, unsafe implicit numeric conversions, undefined names, function arity and argument type errors, missing `ref`, invalid `guard` exits, `stay` reassignment, and missing returns.
 
 ## AI-Agent Tooling
 
@@ -195,6 +202,16 @@ for (int[] row in matrix) {
 }
 ```
 
+Array indexes must be integer expressions (`int` or `uint`). Oda rejects float or string indexes during semantic analysis instead of letting invalid C be generated.
+
+`stay` arrays are fully immutable:
+
+```oda
+stay int[] nums = [1, 2, 3]
+// nums[0] = 99   // SemanticError
+// nums = [4, 5]  // SemanticError
+```
+
 ### Functions And `ref`
 
 ```oda
@@ -267,6 +284,7 @@ OdaLanguage/
 │   ├── lexer.py                # Tokenizer
 │   ├── parser.py               # Recursive descent parser
 │   ├── ast_nodes.py            # AST dataclasses
+│   ├── type_engine.py          # Shared expression type inference and coercion rules
 │   ├── semantic.py             # Semantic analysis
 │   ├── codegen.py              # C code generator
 │   ├── importer.py             # Import resolver / unity AST builder

@@ -25,6 +25,8 @@ stay float gravity = 9.81
 // gravity = 10.0 // Derleme hatası verir!
 ```
 
+Dil kararı: `stay` dizilerde de tam değişmezlik anlamına gelir. `stay int[] nums = [1, 2, 3]` yazıldığında hem `nums = [4, 5]` hem de `nums[0] = 99` derleme zamanında reddedilir. Oda, C'deki `const int*` ve `int* const` ayrımını kullanıcıya taşımaz; "en az sürpriz" ve "fail-fast" ilkeleri gereği `stay` ile işaretlenen değerin içeriği de değiştirilemez kabul edilir.
+
 ## Null Güvenliği (Null Safety)
 Varsayılan olarak OdaLanguage'de hiçbir değişken `null` değerini alamaz (Non-nullable by default). Eğer bir değişkenin `null` olabilmesini istiyorsanız, tipinin sonuna `?` işareti koymalısınız.
 
