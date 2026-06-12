@@ -35,6 +35,39 @@ def _emit_errors(errors: list[OdaError], output_format: str, *, footer: str | No
         print(footer, file=sys.stderr)
 
 
+def _read_source(path: str) -> str:
+    """Read an entry source file, surfacing I/O failures as OdaErrors."""
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except UnicodeDecodeError as e:
+        raise OdaError(f"Source file is not valid UTF-8: {e.reason}",
+                       filename=path, code="E4007") from e
+    except OSError as e:
+        raise OdaError(f"Cannot read source file: {e.strerror or e}",
+                       filename=path, code="E4006") from e
+
+
+def _emit_internal_error(exc: BaseException, output_format: str) -> None:
+    """Top-level catch-all: report an unexpected exception as E5000.
+
+    Never leaks a Python traceback to stderr unless ODA_DEBUG=1.
+    """
+    summary = (str(exc).splitlines() or [""])[0]
+    obj = {
+        "code": "E5000",
+        "error_type": "InternalError",
+        "message": f"{type(exc).__name__}: {summary}".rstrip(": "),
+    }
+    if os.environ.get("ODA_DEBUG") == "1":
+        import traceback
+        traceback.print_exc()
+    if output_format == "json":
+        print(json.dumps(obj, indent=2), file=sys.stderr)
+    else:
+        print(f"  ✗ internal compiler error [{obj['code']}]: {obj['message']}",
+              file=sys.stderr)
+
+
 def _parse_program(source: str, filename: str, output_format: str = "text"):
     try:
         importer = Importer(filename)
@@ -79,7 +112,7 @@ def _pipeline(source: str, filename: str, output_format: str = "text") -> str:
 
 
 def cmd_transpile(args):
-    src = Path(args.file).read_text()
+    src = _read_source(args.file)
     c_code = _pipeline(src, args.file, args.output_format)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -89,7 +122,7 @@ def cmd_transpile(args):
 
 
 def cmd_build(args):
-    src = Path(args.file).read_text()
+    src = _read_source(args.file)
     c_code = _pipeline(src, args.file, args.output_format)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -111,7 +144,7 @@ def cmd_build(args):
 
 
 def cmd_run(args):
-    src = Path(args.file).read_text()
+    src = _read_source(args.file)
     c_code = _pipeline(src, args.file, args.output_format)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -134,7 +167,7 @@ def cmd_run(args):
 
 
 def cmd_export_ast(args):
-    src = Path(args.file).read_text()
+    src = _read_source(args.file)
     tree = _parse_program(src, args.file, args.output_format)
     print(json.dumps(_ast_to_jsonable(tree), indent=2))
 
@@ -168,19 +201,23 @@ def main():
     ast_parser.set_defaults(func=cmd_export_ast)
 
     args = p.parse_args()
-    if args.export_ast:
-        args.file = args.export_ast
-        cmd_export_ast(args)
-        return
-
-    if not args.command:
-        p.print_help()
-        sys.exit(0)
-
+    output_format = getattr(args, "output_format", "text")
     try:
+        if args.export_ast:
+            args.file = args.export_ast
+            cmd_export_ast(args)
+            return
+
+        if not args.command:
+            p.print_help()
+            sys.exit(0)
+
         args.func(args)
     except OdaError as e:
-        _emit_errors([e], args.output_format)
+        _emit_errors([e], output_format)
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001 — last-resort guard: no input may crash
+        _emit_internal_error(e, output_format)
         sys.exit(1)
 
 

@@ -42,7 +42,10 @@ ERROR_CODES = {
     **{f"E10{i:02d}": "Lexer error" for i in range(1, 10)},
     **{f"E20{i:02d}": "Parser error" for i in range(1, 10)},
     **{f"E30{i:02d}": "Semantic error" for i in range(1, 46)},
-    **{f"E400{i}": "Import error" for i in range(1, 6)}
+    **{f"E400{i}": "Import error" for i in range(1, 6)},
+    "E4006": "File I/O error",
+    "E4007": "Source encoding error",
+    "E5000": "Internal compiler error",
 }
 
 
