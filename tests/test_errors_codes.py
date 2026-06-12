@@ -36,7 +36,7 @@ def run_pipeline_for_json(source: str) -> dict:
         pass
 
 def test_json_error_format_and_hints(capsys):
-    source_int_uint = "func main() { uint x = 5 }"
+    source_int_uint = "uint x = 5"
     with pytest.raises(SystemExit):
         _pipeline(source_int_uint, "test1.oda", output_format="json")
     stderr = capsys.readouterr().err
@@ -47,7 +47,7 @@ def test_json_error_format_and_hints(capsys):
     assert re.match(r"^E\d{4}$", errors[0]["code"])
     assert "as uint" in (errors[0].get("hint") or "")
     
-    source_private = "class C { int _foo } func main() { C c = C(); c._foo }"
+    source_private = "class C { int _foo }\nC c = C()\nc._foo\n"
     with pytest.raises(SystemExit):
         _pipeline(source_private, "test2.oda", output_format="json")
     stderr = capsys.readouterr().err
@@ -56,7 +56,7 @@ def test_json_error_format_and_hints(capsys):
     assert re.match(r"^E\d{4}$", errors[0]["code"])
     assert "C" in (errors[0].get("hint") or "")
 
-    source_guard = "extern func readFile(string f) -> string\nfunc main() { guard string content = readFile(\"x\") else { when (FileNotFound) { int y = 1 } } }"
+    source_guard = "extern func readFile(string f) -> string\nguard string content = readFile(\"x\") else { when (FileNotFound) { int y = 1 } }\n"
     with pytest.raises(SystemExit):
         _pipeline(source_guard, "test3.oda", output_format="json")
     stderr = capsys.readouterr().err
@@ -65,4 +65,19 @@ def test_json_error_format_and_hints(capsys):
     assert re.match(r"^E\d{4}$", errors[0]["code"])
     hint = errors[0].get("hint") or ""
     assert "return" in hint or "break" in hint or "continue" in hint
+
+def test_all_raised_codes_in_registry():
+    import re
+    from src.oda.errors import ERROR_CODES
+    
+    raised_codes = set()
+    src_dir = Path(__file__).parent.parent / "src" / "oda"
+    for filename in ("semantic.py", "parser.py"):
+        content = (src_dir / filename).read_text(encoding="utf-8")
+        for m in re.finditer(r"code\s*=\s*[\"'](E\d{4})[\"']", content):
+            raised_codes.add(m.group(1))
+            
+    for code in raised_codes:
+        assert code in ERROR_CODES, f"Code '{code}' raised in parser.py or semantic.py is not registered in ERROR_CODES"
+
 
