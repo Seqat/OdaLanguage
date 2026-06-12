@@ -2,7 +2,14 @@
 from __future__ import annotations
 from . import ast_nodes as ast
 from .errors import SemanticError
-from .type_engine import BUILTIN_TYPES, can_coerce, infer_binary_type, infer_type
+from .type_engine import (
+    BUILTIN_TYPES,
+    ERROR_TYPE,
+    can_coerce,
+    infer_binary_type,
+    infer_type,
+    is_error_type,
+)
 
 _STANDARD_ERROR_TYPES = {
     "FileNotFound",
@@ -131,6 +138,12 @@ class SemanticAnalyzer:
         if isinstance(stmt, ast.VarDeclaration):
             self._analyze_var_decl(stmt)
         elif isinstance(stmt, ast.FuncDeclaration):
+            if stmt.name == "main":
+                self._err(
+                    "Oda programs have no 'main' function", stmt, code="E3046",
+                    hint="Write top-level statements; they become the program entry point.",
+                )
+                return
             self._analyze_func(stmt)
         elif isinstance(stmt, ast.ClassDeclaration):
             self._analyze_class(stmt)
@@ -507,8 +520,10 @@ class SemanticAnalyzer:
                     ci = self.classes.get(self._current_class)
                     if not ci or expr.name not in ci.field_types:
                         self._err(f"Unknown private field '{expr.name}' in class '{self._current_class}'", expr, code="E3032")
+                        return ERROR_TYPE
                 else:
                     self._err(f"Undefined variable '{expr.name}'", expr, code="E3033")
+                    return ERROR_TYPE
         elif isinstance(expr, ast.AssignExpr):
             self._analyze_expr(expr.target)
             self._analyze_expr(expr.value)
@@ -522,15 +537,21 @@ class SemanticAnalyzer:
                 if sym and sym.is_immutable:
                     self._err("Cannot modify element of immutable array", expr.target, code="E3035")
         elif isinstance(expr, ast.BinaryExpr):
-            self._analyze_expr(expr.left)
-            self._analyze_expr(expr.right)
+            left_t = self._analyze_expr(expr.left)
+            right_t = self._analyze_expr(expr.right)
+            # An operand whose type could not be resolved already reported a root
+            # error; do not cascade a bogus "Invalid operands" child on top of it.
+            if is_error_type(left_t) or is_error_type(right_t):
+                return ERROR_TYPE
             inferred = self._infer_type(expr)
             if self._infer_type(expr.left) == "void" or self._infer_type(expr.right) == "void":
                 self._err("Cannot use a void expression in a binary operation", expr, code="E3036")
+                return ERROR_TYPE
             elif inferred is None:
                 left_type = self._infer_type(expr.left)
                 right_type = self._infer_type(expr.right)
                 self._err(f"Invalid operands for '{expr.op}': '{left_type}' and '{right_type}'", expr, code="E3037")
+                return ERROR_TYPE
         elif isinstance(expr, ast.UnaryExpr):
             self._analyze_expr(expr.operand)
         elif isinstance(expr, ast.CastExpr):
@@ -543,19 +564,25 @@ class SemanticAnalyzer:
                 self._analyze_expr(a)
                 if self._infer_type(a) == "void":
                     self._err("Cannot use a void function call as an argument", a, code="E3038")
+            if self._infer_type(expr) is None:
+                return ERROR_TYPE
         elif isinstance(expr, ast.MemberAccess):
             if isinstance(expr.obj, ast.Identifier) and expr.obj.name in self.enums:
                 enum_info = self.enums[expr.obj.name]
                 if expr.member not in enum_info.variants:
                     self._err(f"Enum '{expr.obj.name}' has no variant '{expr.member}'", expr, code="E3039")
+                    return ERROR_TYPE
                 return
-            self._analyze_expr(expr.obj)
+            obj_t = self._analyze_expr(expr.obj)
+            if is_error_type(obj_t):
+                return ERROR_TYPE
             if expr.member.startswith("_"):
                 owner_class = self._infer_type(expr.obj)
                 ci = self.classes.get(owner_class) if owner_class else None
                 owns_private_field = ci is not None and expr.member in ci.field_types
                 if not owns_private_field:
                     self._err(f"Unknown private member '{expr.member}'", expr, code="E3040")
+                    return ERROR_TYPE
                 elif self._current_class != owner_class:
                     self._err(
                         f"Cannot access private member '{expr.member}' outside class '{owner_class}'",
@@ -563,12 +590,16 @@ class SemanticAnalyzer:
                         code="E3003",
                         hint=f"Owner: {owner_class}"
                     )
+                    return ERROR_TYPE
         elif isinstance(expr, ast.IndexAccess):
-            self._analyze_expr(expr.obj)
+            obj_t = self._analyze_expr(expr.obj)
             self._analyze_expr(expr.index)
+            if is_error_type(obj_t):
+                return ERROR_TYPE
             index_type = self._infer_type(expr.index)
             if index_type not in ("int", "uint", None):
                 self._err("Array index must be an integer expression", expr.index, code="E3041")
+                return ERROR_TYPE
         elif isinstance(expr, ast.InterpolatedString):
             for part in expr.parts:
                 if not isinstance(part, str):

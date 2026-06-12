@@ -151,6 +151,7 @@ uint l = strlen("test")
 | **E3024** | `bump(total)` | `bump(ref total)` (Call site requires `ref` if parameter is `ref`) |
 | **E3034** | `stay int x = 1; x = 2` | `int x = 1; x = 2` (Cannot reassign `stay` immutable variable) |
 | **E3035** | `stay int[] arr = [1]; arr[0] = 2` | `int[] arr = [1]; arr[0] = 2` (Cannot modify `stay` array elements) |
+| **E3046** | `func main() -> int { return 0 }` | Write top-level statements; they are the program entry point (no `main`). |
 
 *Note: Classes, Enums, and Imports must be declared at the top level, not inside functions.*
 
