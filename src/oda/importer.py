@@ -106,7 +106,7 @@ class Importer:
                 mod_file = self._resolve_module_file(stmt.module_path)
                 
                 if not mod_file.exists():
-                    raise SemanticError(f"Module not found: {stmt.module_path}", stmt.line, stmt.column, current_file)
+                    raise SemanticError(f"Module not found: {stmt.module_path}", stmt.line, stmt.column, current_file, code="E4001")
 
                 mod_prefix = "_".join(parts)
 
@@ -141,7 +141,7 @@ class Importer:
                 if stmt.names: # from a import b, c
                     for n in stmt.names:
                         if n.startswith('_'):
-                            raise SemanticError(f"Cannot import private member '{n}'", stmt.line, stmt.column, current_file)
+                            raise SemanticError(f"Cannot import private member '{n}'", stmt.line, stmt.column, current_file, code="E4003")
                         if n in direct_imports:
                             raise SemanticError(
                                 f"Name '{n}' already imported from module '{direct_import_modules[n]}'",
@@ -223,7 +223,7 @@ class Importer:
                 if k == 'callee' and isinstance(v, ast.MemberAccess):
                     if isinstance(v.obj, ast.Identifier) and v.obj.name in alias_map:
                         if v.member.startswith('_'):
-                            raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown")
+                            raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown", code="E4005")
                         new_name = alias_map[v.obj.name].get(v.member, v.member)
                         setattr(nodes, k, ast.Identifier(name=new_name, line=v.line, column=v.column))
                         continue
@@ -231,7 +231,7 @@ class Importer:
                 if k == 'expr' and isinstance(v, ast.MemberAccess):
                     if isinstance(v.obj, ast.Identifier) and v.obj.name in alias_map:
                         if v.member.startswith('_'):
-                            raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown")
+                            raise SemanticError(f"Cannot access private member '{v.member}' of module '{v.obj.name}'", v.line, v.column, "Unknown", code="E4005")
                         new_name = alias_map[v.obj.name].get(v.member, v.member)
                         setattr(nodes, k, ast.Identifier(name=new_name, line=v.line, column=v.column))
                         continue

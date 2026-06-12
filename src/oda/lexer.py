@@ -45,8 +45,8 @@ class Lexer:
     def _add(self, ttype: TokenType, value: str, line: int, col: int):
         self.tokens.append(Token(ttype, value, line, col))
 
-    def _error(self, msg: str) -> LexerError:
-        return LexerError(msg, self.line, self.column, self.filename)
+    def _error(self, msg: str, code: str = "E1000", hint: str | None = None) -> LexerError:
+        return LexerError(msg, self.line, self.column, self.filename, code=code, hint=hint)
 
     # ── public API ───────────────────────────────────────────
 
@@ -129,7 +129,7 @@ class Lexer:
             self._add(_ONE_CHAR_OPS[ch], ch, line, col)
             return
 
-        raise self._error(f"Unexpected character: {ch!r}")
+        raise self._error(f"Unexpected character: {ch!r}", code="E1001")
 
     # ── sub-scanners ─────────────────────────────────────────
 
@@ -148,7 +148,7 @@ class Lexer:
                 self._advance()  # /
                 return
             self._advance()
-        raise self._error("Unterminated block comment")
+        raise self._error("Unterminated block comment", code="E1002")
 
     def _scan_string(self, line: int, col: int):
         self._advance()  # skip opening "
@@ -175,14 +175,14 @@ class Lexer:
             else:
                 buf.append(self._advance())
         if not self._ch():
-            raise self._error("Unterminated string literal")
+            raise self._error("Unterminated string literal", code="E1003")
         self._advance()  # skip closing "
         self._add(TokenType.STRING_LIT, "".join(buf), line, col)
 
     def _scan_char(self, line: int, col: int):
         self._advance()  # skip opening '
         if not self._ch() or self._ch() == "'":
-            raise self._error("Empty or unterminated character literal")
+            raise self._error("Empty or unterminated character literal", code="E1004")
         
         char_val = ""
         if self._ch() == "\\":
@@ -199,7 +199,7 @@ class Lexer:
             char_val = self._advance()
             
         if self._ch() != "'":
-            raise self._error("Unterminated character literal")
+            raise self._error("Unterminated character literal", code="E1005")
         self._advance()  # skip closing '
         self._add(TokenType.CHAR_LIT, char_val, line, col)
 

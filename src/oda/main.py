@@ -12,7 +12,7 @@ from .lexer import Lexer
 from .parser import Parser
 from .semantic import SemanticAnalyzer
 from .codegen import CCodeGenerator
-from .errors import OdaError, format_errors_json
+from .errors import OdaError, flatten_errors, format_errors_json
 from .importer import Importer
 
 
@@ -24,11 +24,12 @@ def _compile_command(cc: str, c_path: Path, bin_path: Path) -> list[str]:
 
 
 def _emit_errors(errors: list[OdaError], output_format: str, *, footer: str | None = None) -> None:
+    flat = flatten_errors(errors)
     if output_format == "json":
-        print(format_errors_json(errors), file=sys.stderr)
+        print(format_errors_json(flat), file=sys.stderr)
         return
 
-    for err in errors:
+    for err in flat:
         print(err.format(), file=sys.stderr)
     if footer:
         print(footer, file=sys.stderr)

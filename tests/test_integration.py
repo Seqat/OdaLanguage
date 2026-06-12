@@ -529,15 +529,13 @@ def test_cli_json_output_for_semantic_errors():
 
     assert result.returncode == 1
     payload = json.loads(result.stderr)
-    assert payload == [
-        {
-            "file": str(src_path),
-            "line": 1,
-            "column": 7,
-            "error_type": "SemanticError",
-            "message": "Undefined variable 'missing_value'",
-        }
-    ]
+    assert len(payload) == 1
+    assert payload[0]["file"] == str(src_path)
+    assert payload[0]["line"] == 1
+    assert payload[0]["column"] == 7
+    assert payload[0]["error_type"] == "SemanticError"
+    assert payload[0]["message"] == "Undefined variable 'missing_value'"
+    assert "code" in payload[0]
 
 def test_cli_json_output_for_parser_errors():
     with tempfile.TemporaryDirectory() as tmp:

@@ -1,8 +1,10 @@
 """Recursive-descent parser for OdaLanguage."""
 from __future__ import annotations
 from .tokens import Token, TokenType, TYPE_TOKENS
-from .errors import ParserError
+from .errors import OdaErrorGroup, ParserError
 from . import ast_nodes as ast
+
+MAX_PARSE_ERRORS = 25
 
 
 class Parser:
@@ -10,6 +12,7 @@ class Parser:
         self.tokens = tokens
         self.filename = filename
         self.pos = 0
+        self.errors: list[ParserError] = []
 
     # ── helpers ──────────────────────────────────────────────
     def _cur(self) -> Token:
@@ -32,7 +35,7 @@ class Parser:
         if self._cur().type != ttype:
             t = self._cur()
             raise ParserError(msg or f"Expected {ttype.name}, got {t.type.name} ({t.value!r})",
-                              t.line, t.column, self.filename)
+                              t.line, t.column, self.filename, code="E2001")
         return self._advance()
 
     def _skip_newlines(self):
@@ -44,15 +47,47 @@ class Parser:
             self._advance()
         # also OK at EOF or before '}'
 
+    # ── error recovery ───────────────────────────────────────
+    def _record_error(self, err: ParserError):
+        self.errors.append(err)
+        if len(self.errors) >= MAX_PARSE_ERRORS:
+            raise OdaErrorGroup(self.errors)
+
+    def _synchronize(self):
+        """Skip to the next statement boundary: NEWLINE/SEMICOLON at the
+        statement's brace depth, or the enclosing RBRACE (left unconsumed)."""
+        depth = 0
+        while not self._at(TokenType.EOF):
+            t = self._cur()
+            if t.type == TokenType.LBRACE:
+                depth += 1
+            elif t.type == TokenType.RBRACE:
+                if depth == 0:
+                    return
+                depth -= 1
+            elif t.type in (TokenType.NEWLINE, TokenType.SEMICOLON) and depth == 0:
+                self._advance()
+                return
+            self._advance()
+
     # ── public entry ─────────────────────────────────────────
     def parse(self) -> ast.Program:
         prog = ast.Program(line=1, column=1)
         self._skip_newlines()
         while not self._at(TokenType.EOF):
-            stmt = self._statement()
-            if stmt is not None:
-                prog.statements.append(stmt)
+            start = self.pos
+            try:
+                stmt = self._statement()
+                if stmt is not None:
+                    prog.statements.append(stmt)
+            except ParserError as e:
+                self._record_error(e)
+                self._synchronize()
+                if self.pos == start:
+                    self._advance()  # stray token (e.g. unmatched '}') at top level
             self._skip_newlines()
+        if self.errors:
+            raise OdaErrorGroup(self.errors)
         return prog
 
     # ── statements ───────────────────────────────────────────
@@ -156,7 +191,7 @@ class Parser:
         elif t.type == TokenType.IDENTIFIER:
             base = self._advance().value
         else:
-            raise ParserError(f"Expected type, got {t.value!r}", t.line, t.column, self.filename)
+            raise ParserError(f"Expected type, got {t.value!r}", t.line, t.column, self.filename, code="E2002")
 
         ta = ast.TypeAnnotation(base_type=base, line=t.line, column=t.column)
 
@@ -270,7 +305,7 @@ class Parser:
                 self._consume_terminator()
             elif not self._at(TokenType.RBRACE):
                 cur = self._cur()
-                raise ParserError("Expected ',' or newline after enum variant", cur.line, cur.column, self.filename)
+                raise ParserError("Expected ',' or newline after enum variant", cur.line, cur.column, self.filename, code="E2003")
             self._skip_newlines()
         self._expect(TokenType.RBRACE)
         return ast.EnumDeclaration(line=t.line, column=t.column, name=name, variants=variants)
@@ -608,16 +643,23 @@ class Parser:
         if self._cur().type == TokenType.IDENTIFIER or self._cur().type in TYPE_TOKENS:
             return self._advance()
         t = self._cur()
-        raise ParserError(f"Expected module path component, got {t.value!r}", t.line, t.column, self.filename)
+        raise ParserError(f"Expected module path component, got {t.value!r}", t.line, t.column, self.filename, code="E2004")
 
     # ── block (list of statements) ───────────────────────────
     def _block(self) -> list:
         stmts = []
         self._skip_newlines()
         while not self._at(TokenType.RBRACE, TokenType.EOF):
-            s = self._statement()
-            if s is not None:
-                stmts.append(s)
+            start = self.pos
+            try:
+                s = self._statement()
+                if s is not None:
+                    stmts.append(s)
+            except ParserError as e:
+                self._record_error(e)
+                self._synchronize()
+                if self.pos == start and not self._at(TokenType.RBRACE, TokenType.EOF):
+                    self._advance()
             self._skip_newlines()
         return stmts
 
@@ -859,7 +901,7 @@ class Parser:
             if self._cur().type in TYPE_TOKENS or self._cur().type == TokenType.IDENTIFIER:
                 base = self._advance().value
             else:
-                raise ParserError(f"Expected type after 'new', got {self._cur().value!r}", t.line, t.column, self.filename)
+                raise ParserError(f"Expected type after 'new', got {self._cur().value!r}", t.line, t.column, self.filename, code="E2005")
             
             sizes = []
             while self._at(TokenType.LBRACKET):
@@ -868,12 +910,12 @@ class Parser:
                 self._expect(TokenType.RBRACKET, "Expected ']' after array size")
             
             if not sizes:
-                raise ParserError("Expected array dimensions (e.g. [10]) after type in 'new'", t.line, t.column, self.filename)
+                raise ParserError("Expected array dimensions (e.g. [10]) after type in 'new'", t.line, t.column, self.filename, code="E2006")
             
             return ast.ArrayAllocation(line=t.line, column=t.column, base_type=base, sizes=sizes)
 
 
-        raise ParserError(f"Unexpected token: {t.value!r}", t.line, t.column, self.filename)
+        raise ParserError(f"Unexpected token: {t.value!r}", t.line, t.column, self.filename, code="E2007")
 
     def _parse_interpolated(self, t: Token) -> ast.InterpolatedString:
         """Split 'Hello {a + b}!' into literal and expression parts."""
@@ -885,10 +927,10 @@ class Parser:
                 try:
                     j = raw.index("}", i)
                 except ValueError:
-                    raise ParserError("Unterminated interpolation expression", t.line, t.column, self.filename)
+                    raise ParserError("Unterminated interpolation expression", t.line, t.column, self.filename, code="E2008")
                 expr_src = raw[i + 1:j].strip()
                 if not expr_src:
-                    raise ParserError("Empty interpolation expression", t.line, t.column, self.filename)
+                    raise ParserError("Empty interpolation expression", t.line, t.column, self.filename, code="E2009")
                 from .lexer import Lexer
                 expr_tokens = Lexer(expr_src, self.filename).tokenize()
                 expr_parser = Parser(expr_tokens, self.filename)

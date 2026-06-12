@@ -16,7 +16,15 @@ WIDENING = {
 
 BUILTIN_TYPES = frozenset(WIDENING)
 
+# Internal poisoned type assigned to expressions whose root cause was already
+# reported; every check involving it stays silent to avoid cascading errors.
+ERROR_TYPE = "<error>"
+
 _MISSING = object()
+
+
+def is_error_type(t: str | None) -> bool:
+    return t is not None and ERROR_TYPE in t
 
 
 def full_type(type_ann) -> str | None:
@@ -40,6 +48,8 @@ def full_type(type_ann) -> str | None:
 def can_coerce(src: str | None, dst: str | None) -> bool:
     if src is None or dst is None:
         return False
+    if is_error_type(src) or is_error_type(dst):
+        return True
     if src == dst:
         return True
     return dst in WIDENING.get(src, set())
@@ -71,11 +81,15 @@ def infer_type(expr, scope, classes, enums, functions) -> str | None:
         if isinstance(expr.obj, ast.Identifier) and _enum_has_variant(enums, expr.obj.name, expr.member):
             return expr.obj.name
         obj_type = infer_type(expr.obj, scope, classes, enums, functions)
+        if is_error_type(obj_type):
+            return ERROR_TYPE
         return _class_field_type(classes, obj_type, expr.member)
     if isinstance(expr, ast.IndexAccess):
         obj_type = infer_type(expr.obj, scope, classes, enums, functions)
         if not obj_type:
             return None
+        if is_error_type(obj_type):
+            return ERROR_TYPE
         if obj_type.endswith("[]"):
             return obj_type[:-2]
         if obj_type == "string":
@@ -83,6 +97,8 @@ def infer_type(expr, scope, classes, enums, functions) -> str | None:
         return None
     if isinstance(expr, ast.UnaryExpr):
         operand_type = infer_type(expr.operand, scope, classes, enums, functions)
+        if is_error_type(operand_type):
+            return ERROR_TYPE
         if expr.op == "!" and operand_type == "bool":
             return "bool"
         if expr.op == "-" and operand_type in ("int", "uint", "float"):
@@ -100,6 +116,8 @@ def infer_type(expr, scope, classes, enums, functions) -> str | None:
             return _function_return_type(functions, name)
         if isinstance(expr.callee, ast.MemberAccess):
             obj_type = infer_type(expr.callee.obj, scope, classes, enums, functions)
+            if is_error_type(obj_type):
+                return ERROR_TYPE
             return _class_method_return_type(classes, obj_type, expr.callee.member)
         return None
 
@@ -109,6 +127,9 @@ def infer_type(expr, scope, classes, enums, functions) -> str | None:
 def infer_binary_type(expr: ast.BinaryExpr, scope, classes, enums, functions) -> str | None:
     left = infer_type(expr.left, scope, classes, enums, functions)
     right = infer_type(expr.right, scope, classes, enums, functions)
+
+    if is_error_type(left) or is_error_type(right):
+        return ERROR_TYPE
 
     if expr.op == "??":
         return left or right
