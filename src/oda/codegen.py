@@ -577,6 +577,7 @@ class CCodeGenerator:
         elif isinstance(stmt, ast.ReturnStatement):
             prelude = []
             value = None
+            skip_free = None
             if stmt.value:
                 prelude, value = self._capture_expr(
                     stmt.value,
@@ -584,13 +585,19 @@ class CCodeGenerator:
                     owns_result=self._expr_allocates_heap(stmt.value),
                 )
                 out += prelude
+                # T10: ownership of a returned heap lvalue transfers to the caller;
+                # freeing it here yields free(s); return s; → use-after-free.
+                if isinstance(stmt.value, ast.Identifier):
+                    skip_free = stmt.value.name
             if self._func_starts:
                 start = self._func_starts[-1]
                 for i in range(len(self._destructors) - 1, start - 1, -1):
                     cn, vn = self._destructors[i]
                     out.append(f"{cn}_destruct(&{vn});")
             if self._func_heap_starts:
-                self._emit_heap_cleanup_from(out, self._func_heap_starts[-1], pop=False)
+                self._emit_heap_cleanup_from(
+                    out, self._func_heap_starts[-1], pop=False, skip=skip_free
+                )
             if stmt.value:
                 out.append(f"return {value};")
             else:
@@ -628,7 +635,9 @@ class CCodeGenerator:
         else:
             self._emit_heap_cleanup_from(out, heap_start, pop=True)
 
-    def _emit_heap_cleanup_from(self, out: list[str], start: int, *, pop: bool):
+    def _emit_heap_cleanup_from(
+        self, out: list[str], start: int, *, pop: bool, skip: str | None = None
+    ):
         if pop:
             while len(self._heap_vars) > start:
                 var_name = self._heap_vars.pop()
@@ -637,6 +646,8 @@ class CCodeGenerator:
             return
 
         for var_name in reversed(self._heap_vars[start:]):
+            if var_name == skip:
+                continue
             out.append(self._heap_cleanup_stmt(var_name))
 
     def _heap_cleanup_stmt(self, var_name: str) -> str:

@@ -350,6 +350,17 @@ class SemanticAnalyzer:
             self._check_param_decl(p, stmt.name)
         if stmt.return_type and not self._type_exists(stmt.return_type):
             self._err(f"Unknown return type '{stmt.return_type.base_type}'", stmt, code="E3016")
+        if (
+            stmt.return_type
+            and stmt.return_type.base_type in self.classes
+            and self._class_contains_heap_storage(stmt.return_type.base_type)
+        ):
+            self._err(
+                f"Cannot return class '{stmt.return_type.base_type}' with "
+                "heap-allocated fields by value",
+                stmt, code="E3047",
+                hint="return results via a ref out-parameter",
+            )
         if stmt.is_extern:
             return
 

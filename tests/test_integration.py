@@ -768,3 +768,29 @@ for (int i in 0..3) {
 print("done")
 '''
     assert compile_and_run(src) == "done"
+
+def test_return_heap_string_is_not_use_after_free():
+    # T10: the return path must not free the very lvalue being returned.
+    # Ownership transfers out; `free(s); return s;` would be a heap-use-after-free.
+    src = (
+        'func tag(int n) -> string {\n'
+        '    string s = "n={n}"\n'
+        '    return s\n'
+        '}\n'
+        'print(tag(7))\n'
+    )
+    c_code = _pipeline(src, "<test>")
+    assert "free(s);\n    return s;" not in c_code
+    assert compile_and_run(src) == "n=7"
+
+def test_return_string_literal_emits_no_free_of_literal():
+    # T10: returning a string LITERAL still works and never frees the literal.
+    src = (
+        'func greeting() -> string {\n'
+        '    return "hi"\n'
+        '}\n'
+        'print(greeting())\n'
+    )
+    c_code = _pipeline(src, "<test>")
+    assert 'free("hi")' not in c_code
+    assert compile_and_run(src) == "hi"

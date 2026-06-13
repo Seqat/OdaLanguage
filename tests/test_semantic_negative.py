@@ -82,3 +82,25 @@ def test_undefined_identifier_does_not_cascade(capsys):
     sa2 = _analyze(adversarial)
     assert sa2.errors
     assert all("None" not in str(e) for e in sa2.errors)
+
+
+def test_return_class_with_heap_fields_by_value_is_rejected():
+    # T10 / Bug B: returning a class with heap-allocated fields by value lets a
+    # struct copy escape while the local destructor runs. Reject it at semantic time
+    # with exactly one new error code; results must come back via a ref out-parameter.
+    src = (
+        "class Tag {\n"
+        "    string _name\n"
+        "    construct(string n) {\n"
+        "        _name = n\n"
+        "    }\n"
+        "}\n"
+        "func make() -> Tag {\n"
+        "    Tag t = Tag(\"x\")\n"
+        "    return t\n"
+        "}\n"
+    )
+    sa = _analyze(src)
+    codes = [e.code for e in sa.errors]
+    assert codes == ["E3047"]
+    assert "heap-allocated fields" in sa.errors[0].message

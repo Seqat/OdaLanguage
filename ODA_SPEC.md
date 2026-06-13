@@ -152,6 +152,7 @@ uint l = strlen("test")
 | **E3034** | `stay int x = 1; x = 2` | `int x = 1; x = 2` (Cannot reassign `stay` immutable variable) |
 | **E3035** | `stay int[] arr = [1]; arr[0] = 2` | `int[] arr = [1]; arr[0] = 2` (Cannot modify `stay` array elements) |
 | **E3046** | `func main() -> int { return 0 }` | Write top-level statements; they are the program entry point (no `main`). |
+| **E3047** | `func make() -> Counter { ... return c }` | `func make(ref Counter out) { ... }` (Cannot return a class with heap fields by value; use a `ref` out-parameter) |
 
 *Note: Classes, Enums, and Imports must be declared at the top level, not inside functions.*
 

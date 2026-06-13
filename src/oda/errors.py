@@ -102,6 +102,7 @@ ERROR_CODES = {
     "E3044": "Cannot cast to non-scalar type",
     "E3045": "Cannot cast types",
     "E3046": "Oda program must not have a 'main' function",
+    "E3047": "Cannot return a class with heap-allocated fields by value",
     # Import/IO errors (E4xxx)
     "E4001": "Module not found",
     "E4002": "Import error",
