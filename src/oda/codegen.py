@@ -38,6 +38,7 @@ class CCodeGenerator:
         self._heap_var_dims: dict[str, list[str]] = {}
         self._heap_starts: list[int] = []
         self._func_heap_starts: list[int] = []
+        self._loop_starts: list[tuple[int, int]] = []  # (destructor_depth, heap_depth) per active loop
         self._temp_counter = 0
         self._var_types: dict[str, str] = {}  # variable name → oda type
         self._var_sizes: dict[str, list[int]] = {}  # dimensions for arrays
@@ -594,10 +595,14 @@ class CCodeGenerator:
                 out.append(f"return {value};")
             else:
                 out.append("return;")
-        elif isinstance(stmt, ast.BreakStatement):
-            out.append("break;")
-        elif isinstance(stmt, ast.ContinueStatement):
-            out.append("continue;")
+        elif isinstance(stmt, (ast.BreakStatement, ast.ContinueStatement)):
+            if self._loop_starts:
+                d_start, h_start = self._loop_starts[-1]
+                for i in range(len(self._destructors) - 1, d_start - 1, -1):
+                    cn, vn = self._destructors[i]
+                    out.append(f"{cn}_destruct(&{vn});")
+                self._emit_heap_cleanup_from(out, h_start, pop=False)
+            out.append("break;" if isinstance(stmt, ast.BreakStatement) else "continue;")
         elif isinstance(stmt, ast.MatchStatement):
             self._emit_match(stmt, out, class_ctx)
         elif isinstance(stmt, ast.GuardStatement):
@@ -948,7 +953,9 @@ class CCodeGenerator:
         out += prelude
         out.append(f"while ({cond_s}) {{")
         body = []
+        self._loop_starts.append((len(self._destructors), len(self._heap_vars)))
         self._emit_block(stmt.body, body, class_ctx)
+        self._loop_starts.pop()
         out += ["    " + l for l in body]
         out.append("}")
 
@@ -966,7 +973,9 @@ class CCodeGenerator:
         out += prelude
         out.append(f"for ({init_s}; {cond_s}; {upd_s}) {{")
         body = []
+        self._loop_starts.append((len(self._destructors), len(self._heap_vars)))
         self._emit_block(stmt.body, body, class_ctx)
+        self._loop_starts.pop()
         out += ["    " + l for l in body]
         out.append("}")
 
@@ -989,8 +998,10 @@ class CCodeGenerator:
         op_dec = ">=" if stmt.is_inclusive else ">"
 
         body = []
+        self._loop_starts.append((len(self._destructors), len(self._heap_vars)))
         self._emit_block(stmt.body, body, class_ctx)
-        
+        self._loop_starts.pop()
+
         out.append(f"if ({s_tmp} <= {e_tmp}) {{")
         out.append(f"    for ({ct} {stmt.var_name} = {s_tmp}; {stmt.var_name} {op_inc} {e_tmp}; {stmt.var_name} += {step_expr}) {{")
         out += ["        " + l for l in body]
@@ -1046,9 +1057,11 @@ class CCodeGenerator:
                 out.append(f"    char* {stmt.var_name} = {stmt.var_name}_buf;")
             else:
                 out.append(f"    {self._c_type(stmt.var_type)} {stmt.var_name} = {iter_tmp}[{idx}];")
-                
+
             body = []
+            self._loop_starts.append((len(self._destructors), len(self._heap_vars)))
             self._emit_block(stmt.body, body, class_ctx)
+            self._loop_starts.pop()
             out += ["    " + l for l in body]
             out.append("}")
         elif dims and len(dims) > 0:
@@ -1071,7 +1084,9 @@ class CCodeGenerator:
                 out.append(f"    {self._c_type(stmt.index_type)} {stmt.index_name} = ({self._c_type(stmt.index_type)}){idx};")
             out.append(f"    {self._c_type(stmt.var_type)} {stmt.var_name} = {iterable_s}[{idx}];")
             body = []
+            self._loop_starts.append((len(self._destructors), len(self._heap_vars)))
             self._emit_block(stmt.body, body, class_ctx)
+            self._loop_starts.pop()
             out += ["    " + l for l in body]
             out.append("}")
         else:

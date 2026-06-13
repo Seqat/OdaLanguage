@@ -724,3 +724,47 @@ def test_cli_run_propagates_exit_code():
         )
         assert result.returncode == 42
 
+
+def test_break_in_loop_runs_destructors_and_frees():
+    # T9: early loop exit via `break` must run destructors and free heap vars
+    # declared in the loop body, mirroring the return path.
+    src = '''
+class Res {
+    construct() { print("open") }
+    destruct()  { print("close") }
+}
+for (int i in 0..3) {
+    Res r = Res()
+    string s = "i={i}"
+    if (i == 1) { break }
+    print(s)
+}
+'''
+    assert compile_and_run(src) == "open\ni=0\nclose\nopen\nclose"
+
+def test_continue_in_loop_frees_heap():
+    # T9: `continue` must free heap vars declared above it in the loop body.
+    src = '''
+for (int i in 0..3) {
+    string s = "row={i}"
+    continue
+    print(s)
+}
+print("done")
+'''
+    assert compile_and_run(src) == "done"
+
+def test_break_in_guard_when_frees_heap():
+    # T9: a heap string declared before a guard must be freed on the break path
+    # taken inside the guard's `when` case (guard var is NULL there: free(NULL)).
+    src = '''
+for (int i in 0..3) {
+    string s = "iter={i}"
+    guard string content = readFile("/no/such/file") else {
+        when (FileNotFound) { break }
+    }
+    print(content)
+}
+print("done")
+'''
+    assert compile_and_run(src) == "done"
