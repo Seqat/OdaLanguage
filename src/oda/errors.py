@@ -103,6 +103,8 @@ ERROR_CODES = {
     "E3045": "Cannot cast types",
     "E3046": "Oda program must not have a 'main' function",
     "E3047": "Cannot return a class with heap-allocated fields by value",
+    "E3048": "Nullable modifier is only supported for string and class types",
+    "E3049": "Cannot use a nullable value without unwrapping it",
     # Import/IO errors (E4xxx)
     "E4001": "Module not found",
     "E4002": "Import error",

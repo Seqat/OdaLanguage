@@ -132,7 +132,15 @@ def infer_binary_type(expr: ast.BinaryExpr, scope, classes, enums, functions) ->
         return ERROR_TYPE
 
     if expr.op == "??":
-        return left or right
+        # `a ?? b` removes nullability: the result can never be null. The static
+        # type is the non-nullable form of the left arm; the right arm must match
+        # it (exactly or by widening) or the operator is ill-typed.
+        stripped = left[:-1] if left and left.endswith("?") else left
+        if right is None:
+            return stripped
+        if right == stripped or can_coerce(right, stripped):
+            return stripped
+        return None
 
     if expr.op in ("&&", "||"):
         return "bool" if left == "bool" and right == "bool" else None

@@ -33,7 +33,10 @@ Varsayılan olarak OdaLanguage'de hiçbir değişken `null` değerini alamaz (No
 ```oda
 string? name = null // Geçerli
 // string surname = null // Derleme hatası verir!
+// int? count = null   // Hata (E3048): v1'de `?` yalnızca string/class tipleri için
 ```
+
+v1'de `?` yalnızca string ve class tiplerinde desteklenir; değer tiplerinin (int, float, ...) C'de `null` karşılığı yoktur (E3048). Nullable bir değer `print`/string birleştirme/interpolasyon içinde kullanılmadan önce `??` ya da `guard` ile açılmalıdır (E3049).
 
 ### Null Coalescing (`??`)
 Nullable bir değişkenin değerini güvenli bir şekilde okumak veya boşsa varsayılan bir değer atamak için `??` operatörünü kullanabilirsiniz.

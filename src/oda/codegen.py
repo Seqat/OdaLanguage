@@ -1217,6 +1217,15 @@ class CCodeGenerator:
                 r = self._ensure_str(node.right, r, class_ctx)
                 expr_code = f"_oda_str_concat({l}, {r})"
                 return self._materialize_heap_expr(node, expr_code, owns_result=owns_result)
+            if node.op in ("==", "!=") and (
+                self._looks_like_string(node.left, class_ctx)
+                or self._looks_like_string(node.right, class_ctx)
+            ):
+                self._c_headers.add("string.h")
+                l = self._ensure_str(node.left, l, class_ctx)
+                r = self._ensure_str(node.right, r, class_ctx)
+                cmp = "==" if node.op == "==" else "!="
+                return f"(strcmp({l}, {r}) {cmp} 0)"
             if node.op == "??":
                 return f"({l} != NULL ? {l} : {r})"
             return f"({l} {node.op} {r})"

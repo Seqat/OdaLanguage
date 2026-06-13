@@ -104,3 +104,39 @@ def test_return_class_with_heap_fields_by_value_is_rejected():
     codes = [e.code for e in sa.errors]
     assert codes == ["E3047"]
     assert "heap-allocated fields" in sa.errors[0].message
+
+
+def test_null_coalescing_mismatched_arms_single_error():
+    # T11 Part 1: `??` strips nullability; genuinely mismatched arms still report
+    # exactly one E3037 (no E3001 cascade, no leaked None).
+    src = 'string? a = null\nstring s = a ?? 5\n'
+    sa = _analyze(src)
+    codes = [e.code for e in sa.errors]
+    assert codes.count("E3037") == 1
+    assert len(sa.errors) == 1
+
+
+def test_null_coalescing_strips_nullability_typechecks():
+    # T11 Part 1: `string? n` ?? `string` coerces to plain `string` — no error.
+    src = 'string? n = null\nstring s = n ?? "anon"\nprint(s)\n'
+    sa = _analyze(src)
+    assert sa.errors == []
+
+
+def test_value_type_nullable_is_rejected():
+    # T11 decision (a): value types have no C null representation; `int?` is rejected.
+    sa = _analyze('int? x = null\n')
+    codes = [e.code for e in sa.errors]
+    assert "E3048" in codes
+
+
+def test_string_nullable_is_allowed():
+    # T11 decision (a): string/class nullables remain valid.
+    sa = _analyze('string? s = null\n')
+    assert sa.errors == []
+
+
+def test_guarded_nullable_use_passes():
+    # T11 Part 3: an unwrapped nullable (`?? fallback`) may be used freely.
+    sa = _analyze('string? s = null\nprint(s ?? "-")\n')
+    assert sa.errors == []

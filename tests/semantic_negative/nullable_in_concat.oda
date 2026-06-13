@@ -1,0 +1,4 @@
+# EXPECT_ERROR: without unwrapping
+string? s = null
+string t = "x" + s
+print(t)

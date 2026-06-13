@@ -320,12 +320,41 @@ class SemanticAnalyzer:
                 param, code="E3012"
             )
 
+    def _check_nullable_type(self, ta: ast.TypeAnnotation, node: ast.Node):
+        # v1 decision (a): value scalars have no null representation in C. Only
+        # pointer-backed types (string, arrays, classes) may carry `?`.
+        if (
+            ta.is_nullable
+            and not ta.is_array
+            and ta.base_type != "string"
+            and ta.base_type not in self.classes
+        ):
+            self._err(
+                f"Nullable type '{self._full_type(ta)}' is only supported for string and class types",
+                node, code="E3048",
+                hint="nullable is supported for string and class types in v1",
+            )
+
+    def _reject_nullable_use(self, expr) -> bool:
+        # Part 3: a nullable value reaching print/interpolation/concat unguarded
+        # would emit printf("%s", NULL) (UB). Require `?? fallback` or `guard` first.
+        t = self._infer_type(expr)
+        if t and t.endswith("?"):
+            self._err(
+                f"Cannot use nullable '{t}' here without unwrapping",
+                expr, code="E3049",
+                hint="use `?? fallback` or `guard`",
+            )
+            return True
+        return False
+
     def _analyze_var_decl(self, stmt: ast.VarDeclaration):
         full = self._full_type(stmt.type_ann)
         base = stmt.type_ann.base_type
         # Verify the type exists
         if not self._type_exists(stmt.type_ann):
             self._err(f"Unknown type '{base}'", stmt, code="E3013")
+        self._check_nullable_type(stmt.type_ann, stmt)
 
         # Null safety: non-nullable vars must have an initializer or will be set
         if stmt.initializer:
@@ -466,6 +495,8 @@ class SemanticAnalyzer:
             for is_ref in call.ref_flags:
                 if is_ref:
                     self._err("Function 'print' does not accept ref arguments", call, code="E3022")
+            for arg in call.args:
+                self._reject_nullable_use(arg)
             return
 
         if len(call.args) != len(params):
@@ -554,6 +585,14 @@ class SemanticAnalyzer:
             # error; do not cascade a bogus "Invalid operands" child on top of it.
             if is_error_type(left_t) or is_error_type(right_t):
                 return ERROR_TYPE
+            # Part 3: a nullable operand of string concatenation must be unwrapped
+            # first; reject it here so it doesn't cascade a bogus E3037.
+            if expr.op == "+":
+                for operand in (expr.left, expr.right):
+                    ot = self._infer_type(operand)
+                    if ot and ot.endswith("?"):
+                        self._reject_nullable_use(operand)
+                        return ERROR_TYPE
             inferred = self._infer_type(expr)
             if self._infer_type(expr.left) == "void" or self._infer_type(expr.right) == "void":
                 self._err("Cannot use a void expression in a binary operation", expr, code="E3036")
@@ -615,6 +654,7 @@ class SemanticAnalyzer:
             for part in expr.parts:
                 if not isinstance(part, str):
                     self._analyze_expr(part)
+                    self._reject_nullable_use(part)
         elif isinstance(expr, ast.ArrayAllocation):
             for sz in expr.sizes:
                 self._analyze_expr(sz)

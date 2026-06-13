@@ -11,7 +11,7 @@
 | `float` | `float ratio = 3.14` |
 | `bool` | `bool valid = true` |
 | `string` | `string name = "oda"` |
-| `T?` | `int? maybe = null` (Nullable types) |
+| `T?` | `string? maybe = null` (Nullable — string/class only in v1) |
 | `T[]` | `int[] arr = [1, 2]` |
 | `enum` | `enum Mode { A, B }` |
 
@@ -33,7 +33,7 @@ uint u = (uint)i
 ```oda
 int a = 1              // Mutable
 stay int b = 2         // Immutable (cannot reassign)
-int? c = null          // Nullable initialization
+string? c = null       // Nullable init (string/class only)
 // string _private     // '_' prefix indicates private (in classes)
 ```
 
@@ -85,9 +85,13 @@ match (mode) {
 
 ## 5. Null Safety
 
+Nullable (`T?`) is **string/class only** in v1 — value scalars have no C null
+representation (E3048). A nullable value must be unwrapped (`??` or `guard`)
+before it reaches `print`, interpolation, or concat (E3049).
+
 ```oda
-int? maybe = null
-int definitely = maybe ?? 0  // Fallback expression
+string? maybe = null
+string definitely = maybe ?? "anon"  // ?? strips nullability
 
 // Guard for unwrapping nullable values (e.g., from I/O)
 // MUST exit scope in the else block!
@@ -153,6 +157,8 @@ uint l = strlen("test")
 | **E3035** | `stay int[] arr = [1]; arr[0] = 2` | `int[] arr = [1]; arr[0] = 2` (Cannot modify `stay` array elements) |
 | **E3046** | `func main() -> int { return 0 }` | Write top-level statements; they are the program entry point (no `main`). |
 | **E3047** | `func make() -> Counter { ... return c }` | `func make(ref Counter out) { ... }` (Cannot return a class with heap fields by value; use a `ref` out-parameter) |
+| **E3048** | `int? x = null` | `string? x = null` (Nullable is string/class only in v1) |
+| **E3049** | `string? s = null; print(s)` | `print(s ?? "-")` (Unwrap nullable with `??`/`guard` before use) |
 
 *Note: Classes, Enums, and Imports must be declared at the top level, not inside functions.*
 

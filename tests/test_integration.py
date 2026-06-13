@@ -794,3 +794,27 @@ def test_return_string_literal_emits_no_free_of_literal():
     c_code = _pipeline(src, "<test>")
     assert 'free("hi")' not in c_code
     assert compile_and_run(src) == "hi"
+
+
+def test_null_coalescing_strips_nullability_runs():
+    # T11 Part 1: flagship idiom `string s = n ?? "anon"` compiles and prints.
+    src = 'string? n = null\nstring s = n ?? "anon"\nprint(s)'
+    assert compile_and_run(src) == "anon"
+
+
+def test_string_equality_uses_strcmp():
+    # T11 Part 2: == compares content, not pointers.
+    src = 'string a = "x"\nstring b = "x" + ""\nif (a == b) { print("eq") }'
+    assert compile_and_run(src) == "eq"
+
+
+def test_string_inequality_uses_strcmp():
+    # T11 Part 2: != compares content, not pointers.
+    src = 'string a = "x"\nstring b = "y"\nif (a != b) { print("ne") }'
+    assert compile_and_run(src) == "ne"
+
+
+def test_nullable_unwrapped_print_runs():
+    # T11 Part 3 (positive): `print(s ?? "-")` is a valid unguarded-free use.
+    src = 'string? s = null\nprint(s ?? "-")'
+    assert compile_and_run(src) == "-"
