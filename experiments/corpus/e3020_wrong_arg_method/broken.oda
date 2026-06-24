@@ -1,8 +1,10 @@
 class C {
     construct() {}
+    destruct() {}
     func m(string s) {
-        print(s)
+        print("got: " + s)
     }
 }
 C c = C()
+string val = "hello"
 c.m(5)

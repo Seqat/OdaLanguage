@@ -2,5 +2,5 @@
   "category": "wrong_arg_type",
   "expected_code": "E3020",
   "num_bugs": 1,
-  "description": "Passing int to string parameter in method."
+  "description": "Passing int literal to string parameter in method; method uses string concat."
 }

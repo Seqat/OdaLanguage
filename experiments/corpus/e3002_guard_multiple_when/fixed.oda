@@ -1,5 +1,5 @@
 func test() {
-    guard string? s = null else {
+    guard string? s = "ok" else {
         when (IoError) {
             return
         }

@@ -1,8 +1,8 @@
-func f(int x) {
+func f(int n) {
     print("f")
 }
 func g() {
-    guard string? x = null else {
+    guard string? x = "data" else {
         when (IoError) {
             f("string")
         }

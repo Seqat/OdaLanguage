@@ -32,3 +32,7 @@ Thumbs.db
 
 # Agents
 .agents
+
+
+experiments/results
+experiments/docs

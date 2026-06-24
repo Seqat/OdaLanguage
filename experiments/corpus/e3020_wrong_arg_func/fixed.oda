@@ -1,4 +1,5 @@
-func foo(string x) {
-    print(x)
+func greet(string name) {
+    print("Hello, " + name)
 }
-foo("str")
+string user = "Alice"
+greet(user)

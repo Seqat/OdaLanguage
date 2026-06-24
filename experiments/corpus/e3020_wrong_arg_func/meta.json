@@ -2,5 +2,5 @@
   "category": "wrong_arg_type",
   "expected_code": "E3020",
   "num_bugs": 1,
-  "description": "Passing string to int parameter."
+  "description": "Passing string variable to int parameter; function uses string concat on the param."
 }

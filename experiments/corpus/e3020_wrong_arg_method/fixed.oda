@@ -1,10 +1,10 @@
 class C {
     construct() {}
     destruct() {}
-    func m(int s) {
-        // int literal print bug fix: use dummy print
-        print("fixed")
+    func m(string s) {
+        print("got: " + s)
     }
 }
 C c = C()
-c.m(5)
+string val = "hello"
+c.m(val)

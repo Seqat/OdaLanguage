@@ -1,5 +1,5 @@
 func do_stuff() {
-    guard string? x = null else {
+    guard string? x = "hello" else {
         when (IoError) {
             print("error")
         }
