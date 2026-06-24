@@ -1,0 +1,9 @@
+func do_stuff() {
+    guard string? x = null else {
+        when (IoError) {
+            print("error")
+        }
+    }
+    print(x)
+}
+do_stuff()

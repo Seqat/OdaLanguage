@@ -1,0 +1,6 @@
+{
+  "category": "missing_return",
+  "expected_code": "E3017",
+  "num_bugs": 1,
+  "description": "Function 'classify' returns on the if-branch only; the fall-through path has no return statement."
+}

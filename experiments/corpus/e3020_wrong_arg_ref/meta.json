@@ -1,0 +1,6 @@
+{
+  "category": "wrong_arg_type",
+  "expected_code": "E3020",
+  "num_bugs": 1,
+  "description": "Passing string ref to int ref parameter."
+}

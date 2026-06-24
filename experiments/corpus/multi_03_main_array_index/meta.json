@@ -1,0 +1,7 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3046",
+  "num_bugs": 2,
+  "description": "Defining main and indexing array with string.",
+  "expected_code_2": "E3041"
+}

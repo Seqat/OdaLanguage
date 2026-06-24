@@ -1,0 +1,6 @@
+{
+  "category": "mutability",
+  "expected_code": "E3035",
+  "num_bugs": 1,
+  "description": "Mutating an element of a stay array."
+}

@@ -1,0 +1,12 @@
+func test() {
+    guard string? s = null else {
+        when (IoError) {
+            return
+        }
+        when (FileNotFound) {
+            print("not found")
+        }
+    }
+    print(s)
+}
+test()

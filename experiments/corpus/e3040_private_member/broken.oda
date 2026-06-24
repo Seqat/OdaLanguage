@@ -1,0 +1,18 @@
+class Wallet {
+    int _balance
+
+    construct(int start) {
+        _balance = start
+    }
+
+    func deposit(int amount) {
+        _balance = _balance + amount
+    }
+
+    destruct() {
+    }
+}
+
+Wallet w = Wallet(100)
+w.deposit(50)
+print(w._balance)

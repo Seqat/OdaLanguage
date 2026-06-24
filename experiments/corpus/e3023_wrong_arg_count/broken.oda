@@ -1,0 +1,8 @@
+func area(int width, int height) -> int {
+    return width * height
+}
+
+int w = 5
+int h = 3
+int result = area(w)
+print("area={result}")

@@ -1,0 +1,6 @@
+{
+  "category": "func_main",
+  "expected_code": "E3046",
+  "num_bugs": 1,
+  "description": "Defining a function named main."
+}

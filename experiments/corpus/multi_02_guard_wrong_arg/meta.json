@@ -1,0 +1,7 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3002",
+  "num_bugs": 2,
+  "description": "Guard block without return passing wrong arg to func.",
+  "expected_code_2": "E3020"
+}

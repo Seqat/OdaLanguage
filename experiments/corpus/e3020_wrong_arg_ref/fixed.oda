@@ -1,0 +1,6 @@
+func bar(ref string x) {
+    x = "b"
+}
+string s = "a"
+bar(ref s)
+print(s)

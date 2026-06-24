@@ -1,0 +1,8 @@
+func classify(int score) -> string {
+    if (score >= 60) {
+        return "pass"
+    }
+}
+
+string result = classify(45)
+print(result)

@@ -1,0 +1,4 @@
+func foo(string x) {
+    print(x)
+}
+foo("str")

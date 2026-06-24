@@ -1,0 +1,6 @@
+{
+  "category": "wrong_arg_count",
+  "expected_code": "E3023",
+  "num_bugs": 1,
+  "description": "Calls area(w) with 1 argument; the function requires 2 (width, height)."
+}

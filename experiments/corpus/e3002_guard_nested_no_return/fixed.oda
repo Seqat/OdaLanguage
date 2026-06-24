@@ -1,0 +1,12 @@
+func foo() {
+    guard string? y = null else {
+        when (IoError) {
+            if (true) {
+                print("error")
+            }
+            return
+        }
+    }
+    print(y)
+}
+foo()

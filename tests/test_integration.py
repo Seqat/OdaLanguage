@@ -1,3 +1,4 @@
+import sys
 import pytest
 import subprocess
 import tempfile
@@ -8,7 +9,11 @@ from tests.c_sanitize import TEST_CFLAGS, run_generated_binary
 
 def compile_and_run(oda_source: str) -> str:
     """Returns stdout of the compiled and executed Oda program."""
-    c_code = _pipeline(oda_source, "<test>")
+    c_code, errors = _pipeline(oda_source, "<test>")
+    if errors:
+        for e in errors:
+            print(e.format(), file=sys.stderr)
+        raise SystemExit(1)
     with tempfile.TemporaryDirectory() as tmp:
         c_path = Path(tmp) / "out.c"
         bin_path = Path(tmp) / "out"
@@ -202,7 +207,8 @@ func check() {
 }
 check()
 '''
-    c_code = _pipeline(src, "<test>")
+    c_code, errors = _pipeline(src, "<test>")
+    assert not errors, [e.message for e in errors]
     assert "typedef enum {" in c_code
     assert "ODA_ERROR_FILE_NOT_FOUND" in c_code
     assert "_oda_error == ODA_ERROR_FILE_NOT_FOUND" in c_code

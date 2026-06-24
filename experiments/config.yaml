@@ -1,0 +1,8 @@
+agent_model: "gemma-12b-qat"          # local, via LM Studio
+agent_endpoint: "http://localhost:1234/v1/chat/completions" # LM Studio API endpoint
+temperature: 0.0                       # greedy -> deterministic
+max_iterations: 5                      # k_max
+repeats: 1                             # M; greedy => 1 suffices
+conditions: ["structured", "plain"]    # experiment conditions to run
+oda_cli: "./oda"                       # path to Oda compiler executable
+results_dir: "experiments/results"     # directory to save run outputs

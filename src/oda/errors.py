@@ -7,15 +7,17 @@ class OdaError(Exception):
     """Base error for all compiler errors."""
 
     def __init__(self, message: str, line: int = 0, column: int = 0,
-                 filename: str = "<source>"):
+                 filename: str = "<source>", code: str | None = None):
         self.message = message
         self.line = line
         self.column = column
         self.filename = filename
+        self.code = code
         super().__init__(self.format())
 
     def format(self) -> str:
-        return f"{self.filename}:{self.line}:{self.column}: error: {self.message}"
+        prefix = f"[{self.code}] " if self.code else ""
+        return f"{self.filename}:{self.line}:{self.column}: error: {prefix}{self.message}"
 
 
 class LexerError(OdaError):

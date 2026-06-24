@@ -1,0 +1,8 @@
+func greet(string name) {
+    string msg = "Hello, " + name
+    print(msg)
+    string farewell = "Goodbye, " + name
+    print(farewell)
+}
+
+greet("World")

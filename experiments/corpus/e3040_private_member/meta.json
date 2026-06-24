@@ -1,0 +1,6 @@
+{
+  "category": "private_member_access",
+  "expected_code": "E3040",
+  "num_bugs": 1,
+  "description": "Reads w._balance (a private field) from outside the Wallet class."
+}

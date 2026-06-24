@@ -1,0 +1,6 @@
+{
+  "category": "nullable_assign",
+  "expected_code": "E3015",
+  "num_bugs": 1,
+  "description": "Assigns null directly to non-nullable variable 'display_name' of type string; fix is to use a concrete string literal."
+}

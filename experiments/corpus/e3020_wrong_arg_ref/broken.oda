@@ -1,0 +1,6 @@
+func bar(ref int x) {
+    x = 1
+}
+string s = "a"
+bar(ref s)
+print(s)

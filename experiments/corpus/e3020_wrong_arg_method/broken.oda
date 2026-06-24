@@ -1,0 +1,8 @@
+class C {
+    construct() {}
+    func m(string s) {
+        print(s)
+    }
+}
+C c = C()
+c.m(5)

@@ -1,0 +1,23 @@
+case,expected_code,transpile_ok,run_ok
+e3001_coercion_decl,E3001,Yes,Yes
+e3001_coercion_assign,E3001,Yes,Yes
+e3001_coercion_string_to_int,E3001,Yes,Yes
+e3034_reassign_stay,E3034,Yes,Yes
+e3034_reassign_stay_string,E3034,Yes,Yes
+e3035_mutate_stay_array,E3035,Yes,Yes
+e3035_mutate_stay_matrix,E3035,Yes,Yes
+e3002_guard_no_return,E3002,Yes,Yes
+e3002_guard_multiple_when,E3002,Yes,Yes
+e3002_guard_nested_no_return,E3002,Yes,Yes
+e3020_wrong_arg_func,E3020,Yes,Yes
+e3020_wrong_arg_method,E3020,Yes,Yes
+e3020_wrong_arg_ref,E3020,Yes,Yes
+e3041_index_string,E3041,Yes,Yes
+e3041_index_float,E3041,Yes,Yes
+e3041_index_assign_string,E3041,Yes,Yes
+e3046_illegal_main,E3046,Yes,Yes
+e3046_illegal_main_args,E3046,Yes,Yes
+e3046_illegal_main_return,E3046,Yes,Yes
+multi_01_coercion_stay,E3034 & E3001,Yes,Yes
+multi_02_guard_wrong_arg,E3002 & E3020,Yes,Yes
+multi_03_main_array_index,E3046 & E3041,Yes,Yes

@@ -1,0 +1,4 @@
+func my_main(int x) {
+    print(x)
+}
+my_main(5)

@@ -1,0 +1,6 @@
+{
+  "category": "guard_exit",
+  "expected_code": "E3002",
+  "num_bugs": 1,
+  "description": "Guard block contains if but no guaranteed return."
+}

@@ -1,0 +1,7 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3034",
+  "num_bugs": 2,
+  "description": "Reassigning a stay variable with a float.",
+  "expected_code_2": "E3001"
+}

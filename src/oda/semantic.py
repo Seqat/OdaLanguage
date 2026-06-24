@@ -84,8 +84,8 @@ class SemanticAnalyzer:
             ),
         )
 
-    def _err(self, msg: str, node: ast.Node):
-        self.errors.append(SemanticError(msg, node.line, node.column, self.filename))
+    def _err(self, msg: str, node: ast.Node, code: str | None = None):
+        self.errors.append(SemanticError(msg, node.line, node.column, self.filename, code))
 
     @property
     def _current_class(self) -> str | None:
@@ -204,7 +204,7 @@ class SemanticAnalyzer:
                         has_exit = True
                         break
                 if not has_exit:
-                    self._err("guard else block must exit the current scope (return or break required)", case)
+                    self._err("guard else block must exit the current scope (return or break required)", case, "E3002")
             
             for case in stmt.cases:
                 self._analyze_block(case.body)
@@ -282,15 +282,17 @@ class SemanticAnalyzer:
             elif init_type and init_type != full:
                 # Basic check, no complex coercion for arrays yet
                 if not self._can_coerce(init_type, full):
-                    self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt)
+                    self._err(f"Cannot coerce '{init_type}' to '{full}'", stmt, "E3001")
 
             # Non-nullable assigned null
             if not stmt.type_ann.is_nullable and isinstance(stmt.initializer, ast.NullLiteral):
-                self._err(f"Cannot assign null to non-nullable '{full}'", stmt)
+                self._err(f"Cannot assign null to non-nullable '{full}'", stmt, "E3015")
 
         self.scope.define(Symbol(stmt.name, stmt.type_ann, is_immutable=stmt.is_immutable))
 
     def _analyze_func(self, stmt: ast.FuncDeclaration):
+        if stmt.name == "main":
+            self._err("Cannot define a function named 'main'; top-level code is automatically placed in main", stmt, "E3046")
         old_scope = self.scope
         old_return_type = self._current_return_type
         self.scope = Scope(old_scope, f"func:{stmt.name}")
@@ -300,7 +302,7 @@ class SemanticAnalyzer:
             self.scope.define(Symbol(p.name, p.type_ann, is_ref=p.is_ref))
         self._analyze_block(stmt.body)
         if stmt.return_type and not self._block_always_returns(stmt.body):
-            self._err(f"Not all code paths return a value from function '{stmt.name}'", stmt)
+            self._err(f"Not all code paths return a value from function '{stmt.name}'", stmt, "E3017")
         self.scope = old_scope
         self._current_return_type = old_return_type
 
@@ -366,10 +368,10 @@ class SemanticAnalyzer:
             return
         if ref:
             if actual != expected:
-                self._err(f"Cannot pass '{actual}' as ref '{expected}'", node)
+                self._err(f"Cannot pass '{actual}' as ref '{expected}'", node, "E3020")
             return
         if actual != expected and not self._can_coerce(actual, expected):
-            self._err(f"Cannot pass '{actual}' to parameter of type '{expected}'", node)
+            self._err(f"Cannot pass '{actual}' to parameter of type '{expected}'", node, "E3020")
 
     def _check_call(self, call: ast.CallExpr):
         sig = self._resolve_call_signature(call)
@@ -386,7 +388,7 @@ class SemanticAnalyzer:
             return
 
         if len(call.args) != len(params):
-            self._err(f"Function '{name}' expects {len(params)} argument(s), got {len(call.args)}", call)
+            self._err(f"Function '{name}' expects {len(params)} argument(s), got {len(call.args)}", call, "E3023")
             return
 
         for i, (arg, param) in enumerate(zip(call.args, params)):
@@ -396,7 +398,7 @@ class SemanticAnalyzer:
 
             if param.is_ref:
                 if not is_ref_call:
-                    self._err(f"Parameter '{param.name}' of function '{name}' must be passed with 'ref'", arg)
+                    self._err(f"Parameter '{param.name}' of function '{name}' must be passed with 'ref'", arg, "E3024")
                 if not self._is_lvalue(arg):
                     self._err(f"Cannot pass non-assignable expression as ref parameter '{param.name}'", arg)
                 self._check_type_compatible(actual, expected, arg, ref=True)
@@ -449,15 +451,29 @@ class SemanticAnalyzer:
                     if not ci or expr.name not in ci.field_types:
                         self._err(f"Unknown private field '{expr.name}' in class '{self._current_class}'", expr)
                 else:
-                    self._err(f"Undefined variable '{expr.name}'", expr)
+                    self._err(f"Undefined variable '{expr.name}'", expr, "E3033")
         elif isinstance(expr, ast.AssignExpr):
             self._analyze_expr(expr.target)
             self._analyze_expr(expr.value)
+            target_type = self._infer_type(expr.target)
+            val_type = self._infer_type(expr.value)
+            if target_type and val_type and target_type != val_type:
+                if not self._can_coerce(val_type, target_type):
+                    self._err(f"Cannot coerce '{val_type}' to '{target_type}'", expr, "E3001")
+
             # Immutability check
             if isinstance(expr.target, ast.Identifier):
                 sym = self.scope.lookup(expr.target.name)
                 if sym and sym.is_immutable:
-                    self._err(f"Cannot reassign immutable variable '{expr.target.name}' (declared with 'stay')", expr)
+                    self._err(f"Cannot reassign immutable variable '{expr.target.name}' (declared with 'stay')", expr, "E3034")
+            elif isinstance(expr.target, ast.IndexAccess):
+                root = expr.target.obj
+                while isinstance(root, ast.IndexAccess):
+                    root = root.obj
+                if isinstance(root, ast.Identifier):
+                    sym = self.scope.lookup(root.name)
+                    if sym and sym.is_immutable:
+                        self._err("Cannot mutate elements of an immutable array", expr, "E3035")
         elif isinstance(expr, ast.BinaryExpr):
             self._analyze_expr(expr.left)
             self._analyze_expr(expr.right)
@@ -484,15 +500,18 @@ class SemanticAnalyzer:
                 ci = self.classes.get(owner_class) if owner_class else None
                 owns_private_field = ci is not None and expr.member in ci.field_types
                 if not owns_private_field:
-                    self._err(f"Unknown private member '{expr.member}'", expr)
+                    self._err(f"Unknown private member '{expr.member}'", expr, "E3003")
                 elif self._current_class != owner_class:
                     self._err(
                         f"Cannot access private member '{expr.member}' outside class '{owner_class}'",
-                        expr
+                        expr, "E3040"
                     )
         elif isinstance(expr, ast.IndexAccess):
             self._analyze_expr(expr.obj)
             self._analyze_expr(expr.index)
+            idx_type = self._infer_type(expr.index)
+            if idx_type not in ("int", "uint") and idx_type is not None:
+                self._err("Array index must be an integer", expr.index, "E3041")
         elif isinstance(expr, ast.InterpolatedString):
             for part in expr.parts:
                 if not isinstance(part, str):

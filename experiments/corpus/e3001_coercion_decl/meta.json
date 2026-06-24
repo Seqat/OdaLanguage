@@ -1,0 +1,6 @@
+{
+  "category": "unsafe_numeric_coercion",
+  "expected_code": "E3001",
+  "num_bugs": 1,
+  "description": "Narrowing coercion from float to int on declaration."
+}

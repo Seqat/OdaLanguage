@@ -1,0 +1,6 @@
+{
+  "category": "missing_ref",
+  "expected_code": "E3024",
+  "num_bugs": 1,
+  "description": "Calls double(value) without the required 'ref' keyword at the call site."
+}

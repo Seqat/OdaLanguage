@@ -1,0 +1,6 @@
+{
+  "category": "array_index",
+  "expected_code": "E3041",
+  "num_bugs": 1,
+  "description": "Assigning to array element using string index."
+}

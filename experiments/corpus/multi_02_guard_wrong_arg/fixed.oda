@@ -1,0 +1,13 @@
+func f(int x) {
+    print("f")
+}
+func g() {
+    guard string? x = null else {
+        when (IoError) {
+            f(5)
+            return
+        }
+    }
+    print(x)
+}
+g()

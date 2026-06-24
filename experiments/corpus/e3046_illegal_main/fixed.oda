@@ -1,0 +1,4 @@
+func my_main() {
+    print("hello")
+}
+my_main()

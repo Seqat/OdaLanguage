@@ -1,0 +1,6 @@
+{
+  "category": "mutability",
+  "expected_code": "E3034",
+  "num_bugs": 1,
+  "description": "Reassigning a stay string variable."
+}
