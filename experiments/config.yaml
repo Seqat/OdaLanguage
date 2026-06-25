@@ -2,7 +2,7 @@ agent_model: "google/gemma-4-26b-a4b-it:free"          # OpenRouter Free
 agent_endpoint: "https://openrouter.ai/api/v1/chat/completions" # OpenRouter API endpoint
 temperature: 0.0                       # greedy -> deterministic
 max_tokens: 1024                    # cap completion length (the task only needs the program)
-http_timeout: 300                      # seconds; the 12B model is slow on long completions
+http_timeout: 300                      # seconds; 26B model can be slow on long completions
 max_iterations: 5                      # k_max
 repeats: 5                             # M; greedy => 1 suffices, but running 5 to check stability
 conditions: ["structured", "plain"]    # experiment conditions to run

@@ -2,9 +2,11 @@ import os
 import json
 import subprocess
 import csv
+from pathlib import Path
 
-CORPUS_DIR = "/Users/melekzevit/Desktop/Ali-Okul/OdaLanguage/experiments/corpus"
-ODA_CMD = "/Users/melekzevit/Desktop/Ali-Okul/OdaLanguage/oda"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+CORPUS_DIR = str(_REPO_ROOT / "experiments" / "corpus")
+ODA_CMD    = str(_REPO_ROOT / "oda")
 
 TEST_CASES = [
     # E3001
@@ -285,7 +287,7 @@ def main():
         })
         
     # Write CSV
-    with open(os.path.join("/Users/melekzevit/Desktop/Ali-Okul/OdaLanguage", "verification_log.csv"), "w", newline='') as f:
+    with open(_REPO_ROOT / "experiments" / "verification_log.csv", "w", newline='') as f:
         writer = csv.DictWriter(f, fieldnames=["case", "expected_code", "transpile_ok", "run_ok"])
         writer.writeheader()
         writer.writerows(log_data)

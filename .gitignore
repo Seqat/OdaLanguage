@@ -33,7 +33,10 @@ Thumbs.db
 
 # Agents
 .agents
-
+.claude
+CLAUDE.md
+experiments/CLAUDE.md
 
 experiments/results
 experiments/docs
+experiments/verification_log.csv
