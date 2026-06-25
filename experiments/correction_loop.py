@@ -225,8 +225,20 @@ def call_agent(cfg, messages):
         headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=cfg["http_timeout"]) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
+    for attempt in range(5):
+        try:
+            with urllib.request.urlopen(req, timeout=cfg["http_timeout"]) as resp:
+                resp_bytes = resp.read()
+                break
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+    else:
+        raise RuntimeError("Max retries exceeded for HTTP 429")
+        
+    data = json.loads(resp_bytes.decode("utf-8"))
 
     content = data["choices"][0]["message"]["content"]
     usage = data.get("usage") or {}

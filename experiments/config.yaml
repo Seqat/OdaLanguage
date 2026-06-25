@@ -1,5 +1,4 @@
-agent_model: "google/gemma-3-12b-it"          # OpenRouter
-agent_provider: "DeepInfra"                    # Pin OpenRouter provider
+agent_model: "google/gemma-4-26b-a4b-it:free"          # OpenRouter Free
 agent_endpoint: "https://openrouter.ai/api/v1/chat/completions" # OpenRouter API endpoint
 temperature: 0.0                       # greedy -> deterministic
 max_tokens: 1024                    # cap completion length (the task only needs the program)
