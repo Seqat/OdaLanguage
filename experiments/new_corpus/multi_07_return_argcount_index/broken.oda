@@ -1,0 +1,17 @@
+func classify(int score) -> string {
+    if (score >= 60) {
+        return "pass"
+    }
+}
+
+func add(int a, int b) -> int {
+    return a + b
+}
+
+int[] scores = [45, 80, 30]
+int grade_score = scores["0"]
+int bonus = 5
+string grade = classify(grade_score)
+int total = add(grade_score)
+print("grade={grade}")
+print("total={total}")

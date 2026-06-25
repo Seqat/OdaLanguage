@@ -1,0 +1,13 @@
+func scale(ref int n, int factor) {
+    n = n * factor
+}
+
+func combine(int a, int b) -> int {
+    return a + b
+}
+
+int value = 10
+int amt = 3
+scale(ref value, amt)
+int total = combine(value, amt)
+print("total={total}")

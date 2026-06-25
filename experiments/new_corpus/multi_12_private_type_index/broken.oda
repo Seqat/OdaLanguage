@@ -1,0 +1,25 @@
+class Wallet {
+    int _balance
+
+    construct(int start) {
+        _balance = start
+    }
+
+    func deposit(int amount) {
+        _balance = _balance + amount
+    }
+
+    func get_balance() -> int {
+        return _balance
+    }
+
+    destruct() {
+    }
+}
+
+Wallet w = Wallet(100)
+w.deposit("50")
+int[] history = [100, 150, 200]
+int last = history[0.0]
+print(w._balance)
+print("last={last}")

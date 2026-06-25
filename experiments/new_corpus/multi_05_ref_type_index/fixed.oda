@@ -1,0 +1,15 @@
+func twice(ref int n) {
+    n = n * 2
+}
+
+func label(string s) {
+    print("label: " + s)
+}
+
+int value = 7
+int[] nums = [10, 20, 30]
+twice(ref value)
+label("data")
+int item = nums[1]
+print("value={value}")
+print("item={item}")

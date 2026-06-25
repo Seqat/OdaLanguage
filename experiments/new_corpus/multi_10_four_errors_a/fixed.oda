@@ -1,0 +1,20 @@
+func max(int a, int b) -> int {
+    if (a > b) {
+        return a
+    } else {
+        return b
+    }
+}
+
+func add(int a, int b) -> int {
+    return a + b
+}
+
+int x = 10
+int y = 20
+int[] data = [5, 15, 25]
+int biggest = max(x, y)
+int item = data[1]
+int result = add(biggest, item)
+print("biggest={biggest}")
+print("result={result}")

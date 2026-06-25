@@ -1,0 +1,8 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3020",
+  "expected_code_2": "E3041",
+  "expected_code_3": "E3040",
+  "num_bugs": 3,
+  "description": "String passed to int param in deposit(), array indexed with float, private member '_balance' accessed externally. Fix for E3040 requires using the get_balance() getter."
+}

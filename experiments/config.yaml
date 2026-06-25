@@ -1,10 +1,11 @@
-agent_model: "gemma-12b-qat"          # local, via LM Studio
-agent_endpoint: "http://localhost:1234/v1/chat/completions" # LM Studio API endpoint
+agent_model: "google/gemma-3-12b-it"          # OpenRouter
+agent_provider: "DeepInfra"                    # Pin OpenRouter provider
+agent_endpoint: "https://openrouter.ai/api/v1/chat/completions" # OpenRouter API endpoint
 temperature: 0.0                       # greedy -> deterministic
 max_tokens: 1024                    # cap completion length (the task only needs the program)
 http_timeout: 300                      # seconds; the 12B model is slow on long completions
 max_iterations: 5                      # k_max
-repeats: 1                             # M; greedy => 1 suffices
+repeats: 5                             # M; greedy => 1 suffices, but running 5 to check stability
 conditions: ["structured", "plain"]    # experiment conditions to run
 oda_cli: "./oda"                       # path to Oda compiler executable
 results_dir: "experiments/results"     # directory to save run outputs

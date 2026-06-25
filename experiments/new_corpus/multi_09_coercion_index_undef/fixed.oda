@@ -1,0 +1,7 @@
+int x = 5
+int y = 3
+int[] data = [10, 20, 30]
+x = 3
+int item = data[0]
+int sum = x + item
+print("sum={sum}")

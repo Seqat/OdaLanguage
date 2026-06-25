@@ -1,0 +1,11 @@
+func add(int a, int b) -> int {
+    return a + b
+}
+
+int x = 5
+int y = 3
+int[] data = [10, 20, 30]
+int sum = add(x)
+int first = data["0"]
+print("sum={total}")
+print("first={first}")

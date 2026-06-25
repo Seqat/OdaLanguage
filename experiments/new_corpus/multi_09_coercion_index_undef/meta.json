@@ -1,0 +1,8 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3001",
+  "expected_code_2": "E3041",
+  "expected_code_3": "E3033",
+  "num_bugs": 3,
+  "description": "Float assigned to int variable, array indexed with string, undefined variable 'totl' (typo for 'sum')."
+}

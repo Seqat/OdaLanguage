@@ -95,6 +95,7 @@ CHAT_STOP = ["```\n"]
 # Config (minimal stdlib YAML for the flat experiments/config.yaml)
 # --------------------------------------------------------------------------------------
 
+CALIBRATION_CAP = 10  # --calibrate mode only; experiment default is untouched
 DEFAULTS = {"http_timeout": 300, "run_timeout": 60, "max_tokens": 512}
 
 
@@ -191,18 +192,37 @@ def call_agent(cfg, messages):
 
     Returns (content, prompt_tokens, completion_tokens, estimated: bool).
     """
-    payload = json.dumps(
-        {
-            "model": cfg["agent_model"],
-            "messages": messages,
-            "temperature": cfg["temperature"],
-            "max_tokens": cfg["max_tokens"],
-        }
-    ).encode("utf-8")
+    req_body = {
+        "model": cfg["agent_model"],
+        "messages": messages,
+        "temperature": cfg["temperature"],
+        "max_tokens": cfg["max_tokens"],
+    }
+    if cfg.get("agent_provider"):
+        req_body["provider"] = {"order": [cfg["agent_provider"]], "allow_fallbacks": False}
+        
+    payload = json.dumps(req_body).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    
+    # Check for OpenRouter key in .env
+    env_path = REPO_ROOT / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                # if line has format KEY=VALUE
+                if "=" in line:
+                    key, val = line.split("=", 1)
+                    if key.strip() == "OPENROUTER_API_KEY":
+                        headers["Authorization"] = f"Bearer {val.strip()}"
+                # If .env is just the raw key (as shown by user)
+                elif line.startswith("sk-or-v1-"):
+                    headers["Authorization"] = f"Bearer {line}"
+                    
     req = urllib.request.Request(
         cfg["agent_endpoint"],
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=cfg["http_timeout"]) as resp:
@@ -212,11 +232,16 @@ def call_agent(cfg, messages):
     usage = data.get("usage") or {}
     prompt_tokens = usage.get("prompt_tokens")
     completion_tokens = usage.get("completion_tokens")
+    
+    # OpenRouter returns model and provider
+    resp_model = data.get("model")
+    resp_provider = data.get("provider")
+    
     if prompt_tokens is None or completion_tokens is None:
         prompt_tokens = estimate_tokens("\n".join(m["content"] for m in messages))
         completion_tokens = estimate_tokens(content)
-        return content, prompt_tokens, completion_tokens, True
-    return content, prompt_tokens, completion_tokens, False
+        return content, prompt_tokens, completion_tokens, True, resp_model, resp_provider
+    return content, prompt_tokens, completion_tokens, False, resp_model, resp_provider
 
 
 def build_and_run(cfg, candidate_src):
@@ -264,6 +289,7 @@ def run_trial(case_dir, condition, repeat, cfg):
     """Run one correction loop. Always returns a single result dict (never raises)."""
     case = case_dir.name
     started = time.monotonic()
+    iter_detail = []  # per-iteration records (calibration mode only)
     record = {
         "case": case,
         "condition": condition,
@@ -296,15 +322,30 @@ def run_trial(case_dir, condition, repeat, cfg):
         max_iters = cfg["max_iterations"]
         for i in range(max_iters):
             record["iterations_to_compile"] = i + 1
+            iter_started = time.monotonic()
 
             messages = build_messages(current_source, current_feedback)
-            content, p_tok, c_tok, estimated = call_agent(cfg, messages)
+            content, p_tok, c_tok, estimated, r_model, r_prov = call_agent(cfg, messages)
+            
+            if "agent_model_used" not in record and r_model:
+                record["agent_model_used"] = r_model
+            if "agent_provider_used" not in record and r_prov:
+                record["agent_provider_used"] = r_prov
+                
             record["prompt_tokens"] += p_tok
             record["completion_tokens"] += c_tok
             estimated_any = estimated_any or estimated
 
             candidate = parse_oda_block(content)
             if candidate is None:
+                if cfg.get("calibrate"):
+                    iter_detail.append({
+                        "iteration": i + 1,
+                        "compiles": False,
+                        "parse_fail": True,
+                        "completion_tokens": c_tok,
+                        "wall_seconds": round(time.monotonic() - iter_started, 3),
+                    })
                 current_feedback = render(PARSE_FAIL_FEEDBACK)
                 continue
 
@@ -321,10 +362,26 @@ def run_trial(case_dir, condition, repeat, cfg):
             if compiled_ok:
                 record["compiles"] = True
                 compiled_source = candidate
+                if cfg.get("calibrate"):
+                    iter_detail.append({
+                        "iteration": i + 1,
+                        "compiles": True,
+                        "parse_fail": False,
+                        "completion_tokens": c_tok,
+                        "wall_seconds": round(time.monotonic() - iter_started, 3),
+                    })
                 break
 
             current_source = candidate
             current_feedback = render(raw_fb)
+            if cfg.get("calibrate"):
+                iter_detail.append({
+                    "iteration": i + 1,
+                    "compiles": False,
+                    "parse_fail": False,
+                    "completion_tokens": c_tok,
+                    "wall_seconds": round(time.monotonic() - iter_started, 3),
+                })
 
         # Correctness gate: recorded, never fed back. Build + execute the binary directly
         # so we can require stdout == expected AND a clean exit code (gaming guard).
@@ -339,6 +396,8 @@ def run_trial(case_dir, condition, repeat, cfg):
     if estimated_any:
         record["tokens_estimated"] = True
     record["wall_seconds"] = round(time.monotonic() - started, 3)
+    if cfg.get("calibrate") and iter_detail:
+        record["iterations_detail"] = iter_detail
     return record
 
 # --------------------------------------------------------------------------------------
@@ -365,6 +424,9 @@ def load_done_keys(results_path):
 
 def main():
     parser = argparse.ArgumentParser(description="Oda correction-loop harness.")
+    parser.add_argument("--calibrate", action="store_true",
+                        help="Calibration mode: cap=10, per-iteration detail, "
+                             "output prefixed calibration_.")
     parser.add_argument("--limit", type=int, default=None,
                         help="Run only the first N cases (pilot).")
     parser.add_argument("--conditions", type=str, default=None,
@@ -378,6 +440,11 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    if args.calibrate:
+        cfg["max_iterations"] = CALIBRATION_CAP
+        cfg["calibrate"] = True
+    else:
+        cfg["calibrate"] = False
     conditions = (
         [c.strip() for c in args.conditions.split(",") if c.strip()]
         if args.conditions
@@ -395,7 +462,8 @@ def main():
         results_path = Path(args.resume)
     else:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_path = results_dir / f"results_{stamp}.jsonl"
+        prefix = "calibration_" if args.calibrate else "results_"
+        results_path = results_dir / f"{prefix}{stamp}.jsonl"
     done = load_done_keys(results_path)
 
     total = len(cases) * len(conditions) * repeats
@@ -414,6 +482,26 @@ def main():
                               f"rep={repeat} -> skip (already done)")
                         continue
                     record = run_trial(case_dir, condition, repeat, cfg)
+
+                    # Flag runaway completions (calibration mode).
+                    if record.get("iterations_detail"):
+                        ctoks = [d["completion_tokens"]
+                                 for d in record["iterations_detail"]]
+                        if len(ctoks) >= 2:
+                            s = sorted(ctoks)
+                            mid = len(s) // 2
+                            median = (s[mid] + s[~mid]) / 2
+                            threshold = median * 3
+                            runaways = [d["iteration"]
+                                        for d in record["iterations_detail"]
+                                        if d["completion_tokens"] > threshold]
+                            if runaways:
+                                record["runaway_iterations"] = runaways
+                                print(f"  ⚠ RUNAWAY completion_tokens at "
+                                      f"iteration(s) {runaways} "
+                                      f"(median={median:.0f}, "
+                                      f"threshold={threshold:.0f})")
+
                     out.write(json.dumps(record) + "\n")
                     out.flush()
                     tag = " ERROR" if "error" in record else ""

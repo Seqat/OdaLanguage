@@ -1,0 +1,10 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3024",
+  "expected_code_2": "E3020",
+  "expected_code_3": "E3023",
+  "expected_code_4": "E3041",
+  "expected_code_5": "E3033",
+  "num_bugs": 5,
+  "description": "Missing ref on double() call, int passed to string param in greet(), sum() called with 1 arg, array indexed with string, undefined variable 'totl' (typo for 'total')."
+}

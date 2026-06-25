@@ -1,0 +1,15 @@
+func square(int n) -> int {
+    return n * n
+}
+
+func sum(int a, int b) -> int {
+    return a + b
+}
+
+int x = 3
+int y = 4
+int z = 5
+int sq = square(x)
+int total = sum(y, z)
+print("sq={sq}")
+print("total={total}")

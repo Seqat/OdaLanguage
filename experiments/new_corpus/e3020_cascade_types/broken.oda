@@ -1,0 +1,11 @@
+func process(int count) -> int {
+    return count * 10
+}
+
+func format(string text) {
+    print("Result: " + text)
+}
+
+float measurement = 7.5
+int result = process(measurement)
+format(result)

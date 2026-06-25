@@ -1,0 +1,21 @@
+func twice(ref int n) {
+    n = n * 2
+}
+
+func greet(string name) {
+    print("Hello, " + name)
+}
+
+func sum(int a, int b) -> int {
+    return a + b
+}
+
+int value = 7
+int bonus = 3
+int[] nums = [1, 2, 3]
+twice(value)
+greet(42)
+int total = sum(value)
+int item = nums["2"]
+print("value={value}")
+print("total={totl}")

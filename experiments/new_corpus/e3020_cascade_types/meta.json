@@ -1,0 +1,6 @@
+{
+  "category": "cascade",
+  "expected_code": "E3020",
+  "num_bugs": 2,
+  "description": "Two type mismatches across a call chain. Fixing one plausible way (changing function signature) introduces a new type error, creating a cascade. Multiple fix paths with different costs."
+}

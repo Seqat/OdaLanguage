@@ -1,0 +1,9 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3017",
+  "expected_code_2": "E3023",
+  "expected_code_3": "E3041",
+  "expected_code_4": "E3033",
+  "num_bugs": 4,
+  "description": "max() missing return on else path, max() called with 1 arg (needs 2), array indexed with float, undefined variable 'rslt' (typo for 'result')."
+}

@@ -1,0 +1,9 @@
+func compute(int n) -> int {
+    return n * 2
+}
+
+int base = 100
+int rate = 5
+base = compute(rate)
+int total = base + rate
+print("total={total}")

@@ -1,0 +1,8 @@
+{
+  "category": "multi_bug",
+  "expected_code": "E3041",
+  "expected_code_2": "E3017",
+  "expected_code_3": "E3023",
+  "num_bugs": 3,
+  "description": "Array indexed with string, classify() missing return on else path, add() called with 1 arg (needs 2)."
+}
