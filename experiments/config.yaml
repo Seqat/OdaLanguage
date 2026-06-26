@@ -8,3 +8,4 @@ repeats: 5                             # M; greedy => 1 suffices, but running 5 
 conditions: ["structured", "plain"]    # experiment conditions to run
 oda_cli: "./oda"                       # path to Oda compiler executable
 results_dir: "experiments/results"     # directory to save run outputs
+break_on_deadlock: true                # stop immediately on byte-identical failing output; set false for ablation

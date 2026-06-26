@@ -31,6 +31,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+import hashlib
 
 # --------------------------------------------------------------------------------------
 # Paths / adapter imports
@@ -47,6 +48,9 @@ sys.path.insert(0, str(ADAPTERS_DIR))
 import oda_plain  # noqa: E402
 import oda_structured  # noqa: E402
 
+sys.path.insert(0, str(EXPERIMENTS_DIR))
+from extractor import parse_oda_block, _TOKEN_RE  # noqa: E402
+
 ADAPTERS = {"structured": oda_structured, "plain": oda_plain}
 
 # --------------------------------------------------------------------------------------
@@ -56,10 +60,32 @@ ADAPTERS = {"structured": oda_structured, "plain": oda_plain}
 # Identical across BOTH conditions. Contains the {PROGRAM} and {FEEDBACK} placeholders.
 AGENT_SYSTEM = """You are a coding assistant for Oda, a memory-safe systems language that transpiles to C. You are given an Oda program that does not yet compile/run correctly, plus compiler feedback. Return a corrected version.
 
-Output rules (strict):
-- Output ONLY the complete corrected Oda program, inside exactly ONE ```oda code block.
-- No explanation, no commentary, no text outside the code block.
+Output contract (strict):
+- Output ONLY the complete corrected Oda program inside exactly one ```oda fenced block. No prose outside the block. Always the full program, never a partial diff.
 - Make the MINIMAL change that fixes the reported problem. Do not rewrite or delete unrelated code, and do not remove functionality just to silence errors.
+
+Oda essentials:
+- Types are non-nullable by default; a trailing `?` marks a nullable type, and `??` supplies a fallback value (e.g. `name ?? "anon"`).
+- `guard x when ...` unwraps a nullable `x` before it is used.
+- `stay` marks an immutable binding.
+- An identifier starting with `_` is private: fix out-of-scope access by calling or adding a method, NEVER by removing the underscore.
+- `ref` passes a parameter by reference; the default is a by-value copy.
+
+Worked example. Given a private-member access error like accessing `_count` from outside its class, fix it through a method, not by renaming:
+```oda
+class Counter {
+    stay int _count
+
+    func value() int {
+        return _count
+    }
+}
+
+func main() {
+    Counter c
+    print(c.value())
+}
+```
 
 Program:
 ```oda
@@ -90,6 +116,15 @@ PARSE_FAIL_FEEDBACK = "Your output must be exactly one ```oda code block."
 # match the "```oda" opening (after the backticks comes "oda", not a newline). The closing
 # fence is consumed by the stop sequence, so parse_oda_block tolerates its absence.
 CHAT_STOP = ["```\n"]
+
+def _get_versions():
+    """Return (harness_version, prompt_version) using short SHA256 hashes."""
+    # Hash this file for the harness version
+    harness_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:8]
+    # Hash the invariant prompt strings
+    prompt_str = AGENT_SYSTEM + PARSE_FAIL_FEEDBACK
+    prompt_hash = hashlib.sha256(prompt_str.encode("utf-8")).hexdigest()[:8]
+    return harness_hash, prompt_hash
 
 # --------------------------------------------------------------------------------------
 # Config (minimal stdlib YAML for the flat experiments/config.yaml)
@@ -142,25 +177,7 @@ def load_config(path):
 # Small helpers
 # --------------------------------------------------------------------------------------
 
-_ODA_OPEN_RE = re.compile(r"```oda[ \t]*\r?\n", re.IGNORECASE)
-_ODA_CLOSE_RE = re.compile(r"\r?\n```")
-_TOKEN_RE = re.compile(r"\w+|[^\w\s]")
-
-
-def parse_oda_block(text):
-    """Return the program from the SINGLE ```oda block, or None if absent/ambiguous.
-
-    Requires exactly one ```oda opening fence (case-insensitive). The closing fence is
-    optional: the CHAT_STOP stop sequence consumes it, and models sometimes omit it, so
-    when no closing fence is present the rest of the text is taken as the program.
-    """
-    opens = list(_ODA_OPEN_RE.finditer(text or ""))
-    if len(opens) != 1:
-        return None
-    rest = text[opens[0].end():]
-    close = _ODA_CLOSE_RE.search(rest)
-    body = rest[: close.start()] if close else rest
-    return body.strip("\n")
+# parse_oda_block and _TOKEN_RE are imported from extractor.py above.
 
 
 def estimate_tokens(text):
@@ -308,11 +325,15 @@ def run_trial(case_dir, condition, repeat, cfg):
         "repeat": repeat,
         "compiles": False,
         "iterations_to_compile": 0,
+        "parsed_iterations": 0,
+        "parse_fails": 0,
         "correct": False,
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "wall_seconds": 0.0,
     }
+    if cfg.get("log_raw"):
+        record["raw_completions"] = []
     estimated_any = False
     try:
         adapter = ADAPTERS[condition]
@@ -331,6 +352,7 @@ def run_trial(case_dir, condition, repeat, cfg):
         # clean compile. Runtime behaviour is never fed back to the model (that would be a
         # condition-identical channel that dilutes the structured-vs-plain manipulation).
         compiled_source = None
+        prev_content = None  # deadlock detection: raw model output from the previous iteration
         max_iters = cfg["max_iterations"]
         for i in range(max_iters):
             record["iterations_to_compile"] = i + 1
@@ -339,6 +361,9 @@ def run_trial(case_dir, condition, repeat, cfg):
             messages = build_messages(current_source, current_feedback)
             content, p_tok, c_tok, estimated, r_model, r_prov = call_agent(cfg, messages)
             
+            if cfg.get("log_raw"):
+                record["raw_completions"].append(content)
+
             if "agent_model_used" not in record and r_model:
                 record["agent_model_used"] = r_model
             if "agent_provider_used" not in record and r_prov:
@@ -350,6 +375,7 @@ def run_trial(case_dir, condition, repeat, cfg):
 
             candidate = parse_oda_block(content)
             if candidate is None:
+                record["parse_fails"] += 1
                 if cfg.get("calibrate"):
                     iter_detail.append({
                         "iteration": i + 1,
@@ -358,8 +384,15 @@ def run_trial(case_dir, condition, repeat, cfg):
                         "completion_tokens": c_tok,
                         "wall_seconds": round(time.monotonic() - iter_started, 3),
                     })
+                if cfg.get("break_on_deadlock", True) and content == prev_content:
+                    record["outcome"] = "deadlock"
+                    record["deadlock_iteration"] = i + 1
+                    break
+                prev_content = content
                 current_feedback = render(PARSE_FAIL_FEEDBACK)
                 continue
+
+            record["parsed_iterations"] += 1
 
             tmp = tempfile.NamedTemporaryFile(
                 mode="w", suffix=".oda", delete=False, encoding="utf-8"
@@ -394,6 +427,11 @@ def run_trial(case_dir, condition, repeat, cfg):
                     "completion_tokens": c_tok,
                     "wall_seconds": round(time.monotonic() - iter_started, 3),
                 })
+            if cfg.get("break_on_deadlock", True) and content == prev_content:
+                record["outcome"] = "deadlock"
+                record["deadlock_iteration"] = i + 1
+                break
+            prev_content = content
 
         # Correctness gate: recorded, never fed back. Build + execute the binary directly
         # so we can require stdout == expected AND a clean exit code (gaming guard).
@@ -439,6 +477,8 @@ def main():
     parser.add_argument("--calibrate", action="store_true",
                         help="Calibration mode: cap=10, per-iteration detail, "
                              "output prefixed calibration_.")
+    parser.add_argument("--log-raw", action="store_true",
+                        help="Persist each iteration's raw model completion text into results.")
     parser.add_argument("--limit", type=int, default=None,
                         help="Run only the first N cases (pilot).")
     parser.add_argument("--conditions", type=str, default=None,
@@ -452,6 +492,7 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    cfg["log_raw"] = args.log_raw
     if args.calibrate:
         cfg["max_iterations"] = CALIBRATION_CAP
         cfg["calibrate"] = True
@@ -472,10 +513,12 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
     if args.resume:
         results_path = Path(args.resume)
+        is_new = False
     else:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         prefix = "calibration_" if args.calibrate else "results_"
         results_path = results_dir / f"{prefix}{stamp}.jsonl"
+        is_new = True
     done = load_done_keys(results_path)
 
     total = len(cases) * len(conditions) * repeats
@@ -484,6 +527,11 @@ def main():
 
     k = 0
     with results_path.open("a", encoding="utf-8") as out:
+        if is_new:
+            hv, pv = _get_versions()
+            out.write(json.dumps({"_meta": {"harness_version": hv, "prompt_version": pv}}) + "\n")
+            out.flush()
+
         for case_dir in cases:
             for condition in conditions:
                 for repeat in range(repeats):
@@ -520,9 +568,32 @@ def main():
                     print(f"[{k}/{total}] case={record['case']} cond={record['condition']} "
                           f"rep={record['repeat']} -> compiles={record['compiles']} "
                           f"correct={record['correct']} "
-                          f"iters={record['iterations_to_compile']}{tag}")
+                          f"iters={record['iterations_to_compile']} (parsed={record['parsed_iterations']}){tag}")
 
     print(f"done -> {results_path}")
+
+    # Calculate and report per-condition parse_fail rate
+    stats = {}
+    with results_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if not line.strip(): continue
+            try:
+                row = json.loads(line)
+                cond = row.get("condition")
+                if cond not in stats:
+                    stats[cond] = {"parse_fails": 0, "iters": 0}
+                stats[cond]["parse_fails"] += row.get("parse_fails", 0)
+                stats[cond]["iters"] += row.get("iterations_to_compile", 0)
+            except Exception:
+                pass
+
+    if stats:
+        print("\n--- Parse Fail Rates ---")
+        for cond, st in sorted(stats.items()):
+            fails = st["parse_fails"]
+            iters = st["iters"]
+            rate = (fails / iters * 100) if iters > 0 else 0.0
+            print(f"{cond.capitalize()}: {rate:.1f}% ({fails}/{iters} iterations)")
 
 
 if __name__ == "__main__":
